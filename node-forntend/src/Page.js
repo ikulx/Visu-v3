@@ -1,12 +1,9 @@
 // src/Page.js
 import React, { useEffect, useState, useRef } from 'react';
-import { Layout } from 'antd';
-import 'antd/dist/reset.css'; // Für Ant Design v5; bei v4: 'antd/dist/antd.css'
-
-const { Content } = Layout;
+import 'antd/dist/reset.css';
 
 const Page = ({ svg: svgName, properties }) => {
-  // Pfad zur SVG-Datei im public/assets-Ordner
+  // Pfad zur SVG-Datei (im public/assets-Ordner)
   const svgFile = `/assets/${svgName}.svg`;
   const [svgContent, setSvgContent] = useState('');
   const containerRef = useRef(null);
@@ -20,13 +17,11 @@ const Page = ({ svg: svgName, properties }) => {
         }
         return response.text();
       })
-      .then(text => {
-        setSvgContent(text);
-      })
+      .then(text => setSvgContent(text))
       .catch(err => console.error('Fehler beim Laden des SVG:', err));
   }, [svgFile]);
 
-  // Sobald das SVG geladen ist oder properties sich ändern, parsen, anpassen und injizieren
+  // Sobald SVG geladen oder properties geändert werden, parsen, anpassen und injizieren
   useEffect(() => {
     if (svgContent && containerRef.current) {
       const parser = new DOMParser();
@@ -42,7 +37,6 @@ const Page = ({ svg: svgName, properties }) => {
             properties && properties[propName]
               ? properties[propName].toString()
               : propEl.getAttribute("defaultvalue");
-
           const targets = propEl.querySelectorAll("target");
           targets.forEach(target => {
             const targetType = target.getAttribute("type"); // "Style" oder "Content"
@@ -78,7 +72,6 @@ const Page = ({ svg: svgName, properties }) => {
                 }
               }
             }
-
             if (outputValue !== null) {
               const svgElement = xmlDoc.querySelector("svg");
               if (svgElement) {
@@ -90,7 +83,6 @@ const Page = ({ svg: svgName, properties }) => {
                   });
                 } else if (targetType === "Content") {
                   elementsToUpdate.forEach(el => {
-                    // Wenn ein <tspan> vorhanden, nur dessen Inhalt aktualisieren
                     const tspan = el.querySelector("tspan");
                     if (tspan) {
                       tspan.textContent = outputValue;
@@ -105,10 +97,9 @@ const Page = ({ svg: svgName, properties }) => {
         });
       }
 
-      // Responsives SVG: Entferne feste Größen und setze sie auf 100%
+      // Responsives SVG: Entferne feste Größen, setze 100%
       const svgEl = xmlDoc.querySelector("svg");
       if (svgEl) {
-        // Falls kein viewBox existiert, setze optional einen Default (anpassen, falls nötig)
         if (!svgEl.getAttribute("viewBox")) {
           svgEl.setAttribute("viewBox", "0 0 262 122");
         }
@@ -121,30 +112,12 @@ const Page = ({ svg: svgName, properties }) => {
         svgEl.style.height = "100%";
       }
 
-      // Serialisiere das modifizierte SVG und injiziere es in den Container
       const updatedSvg = new XMLSerializer().serializeToString(xmlDoc);
       containerRef.current.innerHTML = updatedSvg;
     }
   }, [svgContent, properties]);
 
-  return (
-    // Hier verwenden wir einen Ant Design Layout-Wrapper, der den Header-Bereich (z. B. 100px) berücksichtigt.
-    <Layout style={{ minHeight: '100vh', backgroundColor: '#000', overflow: 'hidden' }}>
-      <Content
-        style={{
-          // Berechne die verfügbare Höhe (100vh minus Header-Höhe, z. B. 100px)
-          height: 'calc(100vh - 100px)',
-          width: '100vw',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center'
-        }}
-      >
-        {/* Container, der den restlichen Platz einnimmt */}
-        <div style={{ width: '100%', height: '100%' }} ref={containerRef} />
-      </Content>
-    </Layout>
-  );
+  return <div style={{ width: '100%', height: '100%' }} ref={containerRef} />;
 };
 
 export default Page;

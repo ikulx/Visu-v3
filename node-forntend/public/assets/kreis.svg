@@ -41,6 +41,7 @@
        			<condition eq="8" output="Freecoling und Heizen" />
        			<condition eq="10" output="Hand Aus" />
        			<condition eq="90" output="Abtauung" />
+            <condition eq="99" output="Unbekannt" />
        			<condition eq="100" output="EVU-Sperre" />
        		</target> 
     </property>
