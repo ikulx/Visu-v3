@@ -1,0 +1,66 @@
+
+<!-- <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"> -->
+<svg width="262" height="122" viewBox="0 0 262 122" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <ycontrol>
+    <property name="Status Venti" datatype="Int8" defaultvalue="99">
+      <target type="Style" element="venticolorfill" selector="fill">
+        <condition eq="99" output="#f542ef" />
+        <condition eq="0" output="black" />
+        <condition eq="1" output="green" />
+        <condition eq="2" output="red" />
+        <condition eq="10" output="black" />
+        <condition eq="11" output="green" />
+        <condition eq="12" output="red" />
+        <condition eq="20" output="black" />
+        <condition eq="21" output="green" />
+        <condition eq="22" output="red" />
+      </target>
+      <target type="Style" element="venticolorfill" selector="stroke">
+        <condition eq="99" output="#18c6c9" />
+        <condition lt="10" output="white" />
+        <condition lt="20" output="blue" />
+        <condition lt="30" output="orange" />
+      </target>
+            <target type="Style" element="venticolorstroke" selector="fill">
+        <condition eq="99" output="#18c6c9" />
+        <condition lt="10" output="white" />
+        <condition lt="20" output="blue" />
+        <condition lt="30" output="orange" />
+      </target>
+      <!-- Optional: Ziel zur dynamischen Steuerung des Textes -->
+
+	        <target type="Content" element="myText">
+       			<condition eq="0" output="Auto Aus" />
+        	  <condition eq="1" output="Ein Heizen" />
+       			<condition eq="2" output="Ein BWW" />
+        	  <condition eq="3" output="Ein Kühlen" />
+       			<condition eq="4" output="Störung!" /> 
+       			<condition eq="5" output="Qittieren" />
+       			<condition eq="6" output="Frostschutz" />
+       			<condition eq="7" output="EVU-Sperre" />
+       			<condition eq="8" output="Freecoling und Heizen" />
+       			<condition eq="10" output="Hand Aus" />
+       			<condition eq="90" output="Abtauung" />
+       			<condition eq="100" output="EVU-Sperre" />
+       		</target> 
+    </property>
+  </ycontrol>
+  
+  <!-- Kreis, der die Klasse venticolorfill verwendet -->
+  <!-- <circle class="venticolorfill" cx="100" cy="100" r="80" stroke="#7A1717" stroke-width="3" fill="black"/> -->
+  
+  <!-- Text-Element, das die Klasse myText verwendet -->
+  <!-- <text x="100" y="80" class="myText" font-size="20" text-anchor="middle">Beispieltext</text> -->
+<!-- </svg> -->
+
+
+
+<g id="Frame 15325">
+<rect width="262" height="122" fill="black"/>
+<g id="Pump">
+<path id="Ellipse 2" class="venticolorfill" d="M90.3585 60.9975C90.3585 71.4895 98.864 79.995 109.356 79.995C119.848 79.995 128.354 71.4895 128.354 60.9975C128.354 50.5055 119.848 42 109.356 42C98.864 42 90.3585 50.5055 90.3585 60.9975Z" fill="#2E7D32" stroke="#673838" stroke-width="2.235"/>
+<path id="Polygon 1" class="venticolorstroke" d="M109.356 79.6225L90 58.9487H128.712L109.356 79.6225Z" fill="#673838"/>
+<text id="HZ/BWW_2"  fill="white" font-size="8.94" letter-spacing="0em"><tspan class="myText" x="133.568" y="64.0595">HZ/BWW</tspan></text>
+</g>
+</g>
+</svg>
