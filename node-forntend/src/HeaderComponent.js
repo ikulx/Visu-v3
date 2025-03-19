@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button } from 'antd';
 import { Link, useLocation } from 'react-router-dom';
 import { HomeOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons';
-import { COLORS, DIMENSIONS, ICON_SIZES } from './theme';
+import { theme } from './theme';
 
 const { useBreakpoint } = Grid;
 
@@ -12,7 +12,7 @@ const HeaderComponent = ({ menuItems }) => {
   const screens = useBreakpoint();
   const [drawerVisible, setDrawerVisible] = useState(false);
 
-  // Filtere Home-Eintrag heraus
+  // Filtere den Home-Eintrag heraus (Home wird über das Symbol dargestellt)
   const filteredItems = menuItems.filter(item => item.link !== '/');
   const items = filteredItems.map(item => ({
     key: item.link,
@@ -20,8 +20,8 @@ const HeaderComponent = ({ menuItems }) => {
       <Link
         to={item.link}
         style={{
-          color: COLORS.text,
-          fontSize: '20px',
+          color: theme.headerStyle.color,
+          fontSize: theme.menuStyle.fontSize,
           textAlign: 'center',
           display: 'block',
         }}
@@ -31,27 +31,29 @@ const HeaderComponent = ({ menuItems }) => {
     ),
   }));
 
+  // Home-Symbol (links)
   const homeButton = (
     <div
       style={{
-        width: DIMENSIONS.homeButtonSize,
-        height: DIMENSIONS.homeButtonSize,
+        width: theme.headerStyle.height,
+        height: theme.headerStyle.height,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
       }}
     >
       <Link to="/">
-        <HomeOutlined style={{ fontSize: ICON_SIZES.default, color: COLORS.text }} />
+        <HomeOutlined style={{ fontSize: theme.iconSizes.default, color: theme.headerStyle.color }} />
       </Link>
     </div>
   );
 
+  // User-Symbol (rechts)
   const userButton = (
     <div
       style={{
-        width: DIMENSIONS.homeButtonSize,
-        height: DIMENSIONS.homeButtonSize,
+        width: theme.headerStyle.height,
+        height: theme.headerStyle.height,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
@@ -59,20 +61,21 @@ const HeaderComponent = ({ menuItems }) => {
     >
       <Button
         type="text"
-        icon={<UserOutlined style={{ fontSize: ICON_SIZES.default, color: COLORS.text }} />}
+        icon={<UserOutlined style={{ fontSize: theme.iconSizes.default, color: theme.headerStyle.color }} />}
       />
     </div>
   );
 
   if (screens.md) {
+    // Desktop: Home links, horizontales Menü in der Mitte, User rechts
     return (
       <div
         style={{
           display: 'flex',
           width: '100%',
           alignItems: 'center',
-          height: DIMENSIONS.headerHeight,
-          background: COLORS.primary,
+          height: theme.headerStyle.height,
+          background: theme.headerStyle.backgroundColor,
           padding: '0 16px',
         }}
       >
@@ -100,14 +103,15 @@ const HeaderComponent = ({ menuItems }) => {
       </div>
     );
   } else {
+    // Mobile: Home links, Hamburger-Button in der Mitte, User rechts
     return (
       <div
         style={{
           display: 'flex',
           width: '100%',
           alignItems: 'center',
-          height: DIMENSIONS.headerHeight,
-          background: COLORS.primary,
+          height: theme.headerStyle.height,
+          background: theme.headerStyle.backgroundColor,
           padding: '0 16px',
           justifyContent: 'space-between',
         }}
@@ -123,7 +127,7 @@ const HeaderComponent = ({ menuItems }) => {
           <Button
             type="text"
             ghost
-            icon={<MenuOutlined style={{ color: COLORS.text, fontSize: ICON_SIZES.hamburger }} />}
+            icon={<MenuOutlined style={{ color: theme.headerStyle.color, fontSize: theme.iconSizes.hamburger }} />}
             onClick={() => setDrawerVisible(true)}
           />
         </div>
@@ -133,8 +137,8 @@ const HeaderComponent = ({ menuItems }) => {
           placement="left"
           onClose={() => setDrawerVisible(false)}
           visible={drawerVisible}
-          headerStyle={{ backgroundColor: COLORS.primary, borderBottom: 'none' }}
-          bodyStyle={{ padding: 0, backgroundColor: COLORS.primary }}
+          headerStyle={{ backgroundColor: theme.headerStyle.backgroundColor, borderBottom: 'none' }}
+          bodyStyle={{ padding: 0, backgroundColor: theme.headerStyle.backgroundColor }}
           maskStyle={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
         >
           <Menu
@@ -142,7 +146,11 @@ const HeaderComponent = ({ menuItems }) => {
             selectedKeys={[location.pathname]}
             items={items}
             onClick={() => setDrawerVisible(false)}
-            style={{ fontSize: '20px', background: COLORS.primary, color: COLORS.text }}
+            style={{
+              fontSize: theme.menuStyle.fontSize,
+              background: theme.headerStyle.backgroundColor,
+              color: theme.headerStyle.color,
+            }}
           />
         </Drawer>
       </div>

@@ -4,8 +4,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import io from 'socket.io-client';
 import MainLayout from './MainLayout';
 import Page from './Page';
-import HomePage from './HomePage';
-import 'antd/dist/reset.css'; // Für Ant Design v5
+import 'antd/dist/reset.css';
 
 const host = window.location.hostname;
 const port = 3001;
@@ -28,27 +27,13 @@ function App() {
     <Router>
       <MainLayout menuItems={menuData.menuItems}>
         <Routes>
-          {menuData.menuItems.map((item) => {
-            // Wenn der Link "/" ist und "content" definiert ist, verwende HomePage
-            if (item.link === "/" && item.content) {
-              return (
-                <Route
-                  key={item.link}
-                  path={item.link}
-                  element={<HomePage text={item.content} />}
-                />
-              );
-            } else {
-              // Andernfalls verwende die Page-Komponente (für SVG-Seiten)
-              return (
-                <Route
-                  key={item.link}
-                  path={item.link}
-                  element={<Page svg={item.svg} properties={item.properties} />}
-                />
-              );
-            }
-          })}
+          {menuData.menuItems.map((item) => (
+            <Route
+              key={item.link}
+              path={item.link}
+              element={<Page svg={item.svg} properties={item.properties} />}
+            />
+          ))}
           <Route path="*" element={<div style={{ color: '#fff' }}>Bitte wähle eine Seite aus dem Menü</div>} />
         </Routes>
       </MainLayout>

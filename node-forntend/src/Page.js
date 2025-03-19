@@ -1,14 +1,11 @@
 // src/Page.js
 import React, { useEffect, useState, useRef } from 'react';
-import 'antd/dist/reset.css';
 
 const Page = ({ svg: svgName, properties }) => {
-  // Pfad zur SVG-Datei (im public/assets-Ordner)
   const svgFile = `/assets/${svgName}.svg`;
   const [svgContent, setSvgContent] = useState('');
   const containerRef = useRef(null);
 
-  // SVG laden
   useEffect(() => {
     fetch(svgFile)
       .then(response => {
@@ -21,13 +18,11 @@ const Page = ({ svg: svgName, properties }) => {
       .catch(err => console.error('Fehler beim Laden des SVG:', err));
   }, [svgFile]);
 
-  // Sobald SVG geladen oder properties geändert werden, parsen, anpassen und injizieren
   useEffect(() => {
     if (svgContent && containerRef.current) {
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(svgContent, "image/svg+xml");
 
-      // Bearbeite den <ycontrol>-Bereich
       const ycontrol = xmlDoc.querySelector("ycontrol");
       if (ycontrol) {
         const propertyElements = ycontrol.querySelectorAll("property");
@@ -37,9 +32,10 @@ const Page = ({ svg: svgName, properties }) => {
             properties && properties[propName]
               ? properties[propName].toString()
               : propEl.getAttribute("defaultvalue");
+
           const targets = propEl.querySelectorAll("target");
           targets.forEach(target => {
-            const targetType = target.getAttribute("type"); // "Style" oder "Content"
+            const targetType = target.getAttribute("type");
             const targetElementName = target.getAttribute("element");
             let outputValue = null;
             const conditions = target.querySelectorAll("condition");
@@ -72,6 +68,7 @@ const Page = ({ svg: svgName, properties }) => {
                 }
               }
             }
+
             if (outputValue !== null) {
               const svgElement = xmlDoc.querySelector("svg");
               if (svgElement) {
@@ -97,7 +94,6 @@ const Page = ({ svg: svgName, properties }) => {
         });
       }
 
-      // Responsives SVG: Entferne feste Größen, setze 100%
       const svgEl = xmlDoc.querySelector("svg");
       if (svgEl) {
         if (!svgEl.getAttribute("viewBox")) {
