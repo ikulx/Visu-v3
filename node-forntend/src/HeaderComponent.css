@@ -13,8 +13,8 @@
   .header-home-button,
   .header-menu-button,
   .header-user-button {
-    width: 80px;              /* Einheitliche Breite */
-    height: 80px;             /* Einheitliche Höhe */
+    width: 100px;              /* Einheitliche Breite */
+    height: 100px;             /* Einheitliche Höhe */
     display: flex;            /* Flexbox für Zentrierung */
     justify-content: center;  /* Horizontale Zentrierung */
     align-items: center;      /* Vertikale Zentrierung */
@@ -23,7 +23,8 @@
   .header-home-icon,
   .header-menu-icon,
   .header-user-icon {
-    font-size: 32px;          /* Einheitliche Symbolgröße */
+    font-weight: 100px;
+    size: 100px;          /* Einheitliche Symbolgröße */
     color: #fff;              /* Farbe anpassbar, hier Weiß als Beispiel */
   }
   

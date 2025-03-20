@@ -46,7 +46,7 @@
        		</target> 
     </property>
 
-        <property name="Status Venti1" datatype="Int8" defaultvalue="99">
+        <property name="Status Venti" datatype="Int8" defaultvalue="99">
             <target type="Style" element="venticolorstroke" selector="fill">
         <condition eq="99" output="#18c6c9" />
         <condition lt="10" output="white" />

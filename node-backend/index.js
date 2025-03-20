@@ -29,27 +29,41 @@ app.post('/update-menu', (req, res) => {
   res.sendStatus(200);
 });
 
+// Rekursive Funktion, um einen Menüeintrag anhand des Links zu finden und seine Properties zu aktualisieren.
+const updateMenuItemProperties = (items, link, newProperties) => {
+  for (let item of items) {
+    if (item.link === link) {
+      item.properties = {
+        ...item.properties,
+        ...newProperties
+      };
+      return true;
+    }
+    if (item.sub && Array.isArray(item.sub)) {
+      if (updateMenuItemProperties(item.sub, link, newProperties)) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
 // Endpunkt zum Aktualisieren einzelner Properties eines Menüeintrags
 app.post('/update-properties', (req, res) => {
-  const update = req.body; // Beispiel: { "link": "/kreis", "properties": { "Status Venti": "2" } }
+  const update = req.body; // Beispiel: { "link": "/kreis2", "properties": { "Status Venti": "2" } }
 
   if (!currentMenu.menuItems || !Array.isArray(currentMenu.menuItems)) {
     return res.status(500).send("Menu not initialized");
   }
 
-  // Finde den Menüeintrag anhand des Links
-  const index = currentMenu.menuItems.findIndex(item => item.link === update.link);
-  if (index === -1) {
+  // Verwende die rekursive Funktion, um den Eintrag zu finden und zu aktualisieren
+  const updated = updateMenuItemProperties(currentMenu.menuItems, update.link, update.properties);
+
+  if (!updated) {
     return res.status(404).send("Menu item not found");
   }
 
-  // Aktualisiere nur die Properties des gefundenen Eintrags
-  currentMenu.menuItems[index].properties = {
-    ...currentMenu.menuItems[index].properties,
-    ...update.properties
-  };
-
-  console.log(`Properties für ${update.link} aktualisiert:`, currentMenu.menuItems[index].properties);
+  console.log(`Properties für ${update.link} aktualisiert:`, update.properties);
 
   // Sende das aktualisierte Menü an alle Clients
   io.emit('menu-update', currentMenu);
