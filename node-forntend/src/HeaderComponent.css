@@ -1,0 +1,40 @@
+.header-container {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    height: 64px;
+    padding: 0 16px;
+  }
+  
+  .header-container.mobile {
+    justify-content: space-between;
+  }
+  
+  .header-home-button,
+  .header-menu-button,
+  .header-user-button {
+    width: 80px;              /* Einheitliche Breite */
+    height: 80px;             /* Einheitliche Höhe */
+    display: flex;            /* Flexbox für Zentrierung */
+    justify-content: center;  /* Horizontale Zentrierung */
+    align-items: center;      /* Vertikale Zentrierung */
+  }
+  
+  .header-home-icon,
+  .header-menu-icon,
+  .header-user-icon {
+    font-size: 32px;          /* Einheitliche Symbolgröße */
+    color: #fff;              /* Farbe anpassbar, hier Weiß als Beispiel */
+  }
+  
+  .header-menu {
+    border-bottom: none;
+    background: transparent;
+    flex: 1;
+    display: flex;
+    justify-content: center;  /* Zentriert das Menü im Desktop-Modus */
+  }
+  
+  .header-menu-mobile {
+    font-size: 20px;
+  }
