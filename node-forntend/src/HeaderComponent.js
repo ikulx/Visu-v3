@@ -1,7 +1,7 @@
 // src/HeaderComponent.js
 import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button, Modal, Radio } from 'antd';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom'; // Importiere useNavigate
 import { HomeOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import './HeaderComponent.css';
@@ -9,25 +9,56 @@ import './HeaderComponent.css';
 const { useBreakpoint } = Grid;
 
 const HeaderComponent = ({ menuItems }) => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const location = useLocation();
   const screens = useBreakpoint();
   const navigate = useNavigate();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
 
-  // Filtere den Home-Link aus den Menüpunkten
-  const filteredItems = menuItems.filter(item => item.link !== '/');
-  const items = filteredItems.map(item => ({
-    key: item.link,
-    label: <Link to={item.link} className="header-menu-item">{item.label}</Link>,
-  }));
+  // Hilfsfunktion: Erzeuge ein Menü-Item inkl. Untermenüpunkte
+  const createMenuItem = (item) => {
+    // Falls ein Untermenü vorhanden ist, filtern wir die enableten Einträge
+    if (item.sub && Array.isArray(item.sub)) {
+      const enabledChildren = item.sub.filter(child =>
+        !child.hasOwnProperty('enable') || child.enable === "true"
+      );
+      if (enabledChildren.length === 0) {
+        return {
+          key: item.label, // Verwende Label als Key
+          label: <span className="header-menu-item">{t(item.label)}</span>,
+          disabled: true,
+        };
+      } else if (enabledChildren.length === 1) {
+        return createMenuItem(enabledChildren[0]);
+      } else {
+        return {
+          key: item.link || item.label,
+          label: item.link ? (
+            <Link to={item.link} className="header-menu-item">{t(item.label)}</Link>
+          ) : (
+            <span className="header-menu-item">{t(item.label)}</span>
+          ),
+          children: enabledChildren.map(createMenuItem).filter(child => child !== null),
+        };
+      }
+    } else {
+      // Kein Submenü → Einfaches Item, Übersetzung des Labels
+      return item.link
+        ? { key: item.link, label: <Link to={item.link} className="header-menu-item">{t(item.label)}</Link> }
+        : { key: item.label, label: <span className="header-menu-item">{t(item.label)}</span>, disabled: true };
+    }
+  };
 
-  // Prüfe, ob wir uns auf der Home-Seite befinden
+  // Filtere den Home-Link aus den Menüpunkten, da das Home-Symbol separat dargestellt wird.
+  const filteredItems = menuItems.filter(item => item.link !== '/');
+  const menuItemsForMenu = filteredItems.map(createMenuItem).filter(item => item !== null);
+
+  // Prüfe, ob wir uns auf der Home-Seite befinden.
   const isHomeActive = location.pathname === '/';
   const activeColor = "#ffb000";
 
-  // Home-Symbol als Button; erhält aktive Farbe, wenn Home aktiv ist
+  // Home-Symbol als Button; erhält aktive Farbe, wenn Home aktiv ist.
   const homeButton = (
     <Button
       className="header-home-button"
@@ -43,7 +74,16 @@ const HeaderComponent = ({ menuItems }) => {
     />
   );
 
-
+  // Hamburger-Menü-Button (für mobile Ansicht)
+  const menuButton = (
+    <Button
+      className="header-menu-button"
+      type="default"
+      ghost
+      icon={<MenuOutlined className="header-menu-icon" style={{ fontSize: '32px', color: '#fff' }} />}
+      onClick={() => setDrawerVisible(true)}
+    />
+  );
 
   // User-Button: Öffnet ein Modal zur Sprachwahl
   const userButton = (
@@ -87,7 +127,7 @@ const HeaderComponent = ({ menuItems }) => {
         <Menu
           mode="horizontal"
           selectedKeys={[location.pathname]}
-          items={items}
+          items={menuItemsForMenu}
           className="header-menu"
           style={{ flex: 1, background: 'transparent', borderBottom: 'none' }}
         />
@@ -114,15 +154,13 @@ const HeaderComponent = ({ menuItems }) => {
           placement="left"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
-          styles={{
-            header: { borderBottom: 'none' },
-            body: { padding: 0 }
-          }}
+          headerStyle={{ borderBottom: 'none' }}
+          bodyStyle={{ padding: 0 }}
         >
           <Menu
             mode="vertical"
             selectedKeys={[location.pathname]}
-            items={items}
+            items={menuItemsForMenu}
             onClick={() => setDrawerVisible(false)}
             className="header-menu-mobile"
           />
