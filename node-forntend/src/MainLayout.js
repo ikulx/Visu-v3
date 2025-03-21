@@ -1,3 +1,4 @@
+// src/MainLayout.js
 import React from 'react';
 import { Layout } from 'antd';
 import HeaderComponent from './HeaderComponent';

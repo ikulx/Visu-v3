@@ -20,7 +20,6 @@ const Page = ({ svg: svgName, properties }) => {
 
   useEffect(() => {
     if (svgContent && containerRef.current) {
-      // Generische Ersetzung aller Platzhalter im Format {{key}}
       let processedSvg = svgContent.replace(/{{(.*?)}}/g, (match, p1) => t(p1.trim()));
       
       const parser = new DOMParser();
@@ -97,7 +96,7 @@ const Page = ({ svg: svgName, properties }) => {
     }
   }, [svgContent, properties, t]);
 
-  return <div style={{ width: '100%', height: '100%' }} ref={containerRef} />;
+  return <div style={{ width: '100%', height: '100%', overflow: 'hidden' }} ref={containerRef} />;
 };
 
 export default Page;
