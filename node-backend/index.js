@@ -61,7 +61,7 @@ app.post('/update-menu', (req, res) => {
   } catch (err) {
     console.error('Fehler beim Speichern des Menüs:', err);
   }
-  console.log('Neues Menü empfangen:', currentMenu);
+  //console.log('Neues Menü empfangen:', currentMenu);
   io.emit('menu-update', currentMenu);
   res.sendStatus(200);
 });

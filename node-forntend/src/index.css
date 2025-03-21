@@ -5,3 +5,14 @@ html, body, #root {
   overflow: hidden;
   background-color: #000;
 }
+
+.custom-menu .ant-menu-item,
+.custom-menu .ant-menu-submenu-title {
+  height: 64px !important;
+  line-height: 64px !important;
+  padding: 10 !important;
+  margin-top: 0 !important;
+  display: flex;
+  align-items: center;
+}
+
