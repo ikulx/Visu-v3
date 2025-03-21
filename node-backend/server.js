@@ -5,6 +5,9 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 
+// Importiere die SQLite-Routen
+const dbRoutes = require('./dbRoutes');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -19,9 +22,8 @@ const io = socketIo(server, {
 // Middleware zum Parsen von JSON-Bodies
 app.use(bodyParser.json());
 
+// Menü-Dateipfad und Default-Menü
 const menuFilePath = path.join(__dirname, 'menu.json');
-
-// Default-Menü, falls kein persistierter Stand vorliegt
 const defaultMenu = {
   menuItems: [
     {
@@ -33,13 +35,11 @@ const defaultMenu = {
         "Projektnummer": "x",
         "Schemanummer": "y"
       }
-    },
-
+    }
     // weitere Standard-Menüeinträge können hier ergänzt werden
   ]
 };
 
-// Versuche, ein persistiertes Menü zu laden
 let currentMenu;
 try {
   const menuData = fs.readFileSync(menuFilePath, 'utf8');
@@ -61,12 +61,11 @@ app.post('/update-menu', (req, res) => {
   } catch (err) {
     console.error('Fehler beim Speichern des Menüs:', err);
   }
-  //console.log('Neues Menü empfangen:', currentMenu);
   io.emit('menu-update', currentMenu);
   res.sendStatus(200);
 });
 
-// Rekursive Funktion, um einen Menüeintrag anhand des Links zu finden und seine Properties zu aktualisieren
+// Rekursive Funktion zum Aktualisieren einzelner Menüeinträge
 const updateMenuItemProperties = (items, link, newProperties) => {
   for (let item of items) {
     if (item.link === link) {
@@ -98,8 +97,6 @@ app.post('/update-properties', (req, res) => {
     return res.status(404).send("Menu item not found");
   }
 
-  //console.log(`Properties für ${update.link} aktualisiert:`, update.properties);
-
   try {
     fs.writeFileSync(menuFilePath, JSON.stringify(currentMenu), 'utf8');
   } catch (err) {
@@ -110,19 +107,18 @@ app.post('/update-properties', (req, res) => {
   res.sendStatus(200);
 });
 
-// Neuer Endpunkt zum Setzen der Footer-Daten
+// Endpunkt zum Setzen der Footer-Daten
 app.post('/setFooter', (req, res) => {
   const footerUpdate = req.body; // z. B. { "temperature": "22°C" }
   currentFooter = {
     ...currentFooter,
     ...footerUpdate
   };
-  //console.log('Footer aktualisiert:', currentFooter);
   io.emit('footer-update', currentFooter);
   res.sendStatus(200);
 });
 
-// Bei einer neuen Socket.IO-Verbindung werden das aktuelle Menü und die Footer-Daten sofort gesendet
+// Bei einer neuen Socket.IO-Verbindung werden aktuelle Menü- und Footer-Daten gesendet
 io.on('connection', (socket) => {
   console.log('Neuer Client verbunden:', socket.id);
   socket.emit('menu-update', currentMenu);
@@ -132,6 +128,9 @@ io.on('connection', (socket) => {
     console.log('Client getrennt:', socket.id);
   });
 });
+
+// Verwende die SQLite-Endpunkte aus der separaten Datei
+app.use('/db', dbRoutes);
 
 // Starte den Server auf Port 3001
 const PORT = 3001;
