@@ -1,13 +1,14 @@
 // src/App.js
-import React, { Suspense, useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import io from 'socket.io-client';
+import { Spin } from 'antd';
+import socket from './socket'; // Zentrale Socket-Instanz importieren
 import MainLayout from './MainLayout';
 import 'antd/dist/reset.css';
 
 const LazyPage = React.lazy(() => import('./Page'));
 
-// Rekursive Funktion, um die Menüstruktur zu „flatten“
+// Rekursive Funktion, um alle Menüeinträge flach zu legen
 const flattenMenuItems = (items) => {
   let flat = [];
   items.forEach(item => {
@@ -21,16 +22,12 @@ const flattenMenuItems = (items) => {
   return flat;
 };
 
-const host = window.location.hostname;
-const port = 3001;
-const socket = io(`http://${host}:${port}`);
-
 function App() {
   const [menuData, setMenuData] = useState({ menuItems: [] });
 
   useEffect(() => {
     socket.on('menu-update', (data) => {
-      console.log('Empfangenes Menü:', data);
+      console.log('Menu update received:', data);
       setMenuData(data);
     });
     return () => {
@@ -38,21 +35,51 @@ function App() {
     };
   }, []);
 
+  // Alle Menüeinträge flach legen
   const flatMenuItems = flattenMenuItems(menuData.menuItems);
+
+  // Alle definierten SVG-Namen extrahieren und duplikate entfernen
+  const allSvgs = useMemo(() => {
+    const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
+    return Array.from(new Set(svgNames));
+  }, [flatMenuItems]);
 
   return (
     <Router>
       <MainLayout menuItems={menuData.menuItems}>
-        <Suspense fallback={<div style={{ color: '#fff' }}>Lädt...</div>}>
+        <Suspense
+          fallback={
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                height: '100%',
+                color: '#fff'
+              }}
+            >
+              <Spin size="large" tip="Lädt..." />
+            </div>
+          }
+        >
           <Routes>
             {flatMenuItems.map(item => (
               <Route
                 key={item.link}
                 path={item.link}
-                element={<LazyPage svg={item.svg} properties={item.properties} />}
+                element={
+                  <LazyPage
+                    svg={item.svg}
+                    properties={item.properties}
+                    allSvgs={allSvgs}
+                  />
+                }
               />
             ))}
-            <Route path="*" element={<div style={{ color: '#fff' }}>Bitte wähle eine Seite aus dem Menü</div>} />
+            <Route
+              path="*"
+              element={<div style={{ color: '#fff' }}>Bitte wähle eine Seite aus dem Menü</div>}
+            />
           </Routes>
         </Suspense>
       </MainLayout>
