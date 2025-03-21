@@ -121,11 +121,11 @@ const FooterComponent = () => {
 
       {/* Rechte Spalte: Temperatur, Uhrzeit & Datum */}
       <Col span={8} style={{ textAlign: 'right', paddingRight: 16 }}>
-        <div style={{ fontSize: 12, lineHeight: 1.2, color: '#fff' }}>
-          <Text style={{ display: 'block', margin: 0, padding: 0 }}>
-            {footerData.temperature} | {formattedTime}
+        <div style={{ fontSize: 20, lineHeight: 1.2, color: '#fff' }}>
+          <Text style={{fontSize: 18, display: 'block', margin: 0, padding: 0 }}>
+            {footerData.temperature}°C | {formattedTime}
           </Text>
-          <Text style={{ display: 'block', margin: 0, padding: 0 }}>
+          <Text style={{fontSize: 18, display: 'block', margin: 0, padding: 0 }}>
             {formattedDate}
           </Text>
         </div>

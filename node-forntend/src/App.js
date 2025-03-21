@@ -3,7 +3,7 @@ import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Spin } from 'antd';
 import socket from './socket'; // Zentrale Socket-Instanz importieren
-import MainLayout from './MainLayout';
+import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
 
 const LazyPage = React.lazy(() => import('./Page'));
