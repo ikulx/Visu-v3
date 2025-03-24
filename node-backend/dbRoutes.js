@@ -51,12 +51,10 @@ async function sendNodeRedUpdate(name, var_value) {
 router.post('/update-variable', (req, res) => {
   const { key, search, target, value } = req.body;
   
-  // Überprüfen, ob die Spaltennamen in der Whitelist enthalten sind
   if (!allowedColumns.includes(key) || !allowedColumns.includes(target)) {
     return res.status(400).json({ error: "Ungültige Spaltenangabe." });
   }
   
-  // Dynamisches Update-Statement; Spaltennamen sind sicher, da geprüft
   const sql = `UPDATE QHMI_VARIABLES SET ${target} = ? WHERE ${key} = ?`;
   
   sqliteDB.run(sql, [value, search], function(err) {
@@ -70,9 +68,13 @@ router.post('/update-variable', (req, res) => {
       sendNodeRedUpdate(search, value);
     }
     
+    // Sende zusätzlich die komplette DB an den neuen Endpoint
+    sendFullDbUpdate();
+    
     res.json({ message: "Datenbank erfolgreich aktualisiert.", changes: this.changes });
   });
 });
+
 
 // Endpunkt zum Abrufen aller VAR_VALUE-Werte als Array von JSON-Objekten
 router.get('/getAllValue', (req, res) => {
@@ -87,6 +89,69 @@ router.get('/getAllValue', (req, res) => {
     res.json(rows);
   });
 });
+
+// Neuer Endpunkt zum Ausführen mehrerer Updates
+router.post('/update-batch', (req, res) => {
+  const { updates } = req.body;
+  if (!Array.isArray(updates)) {
+    return res.status(400).json({ error: "Das Feld 'updates' muss ein Array sein." });
+  }
+
+  let errors = [];
+  let executed = 0;
+  const total = updates.length;
+
+  // Abarbeiten der Updates
+  updates.forEach((updateObj, index) => {
+    if (!updateObj.sql || !updateObj.params) {
+      errors.push({ index, error: "Ungültiges Update-Objekt" });
+      checkFinish();
+      return;
+    }
+    sqliteDB.run(updateObj.sql, updateObj.params, function(err) {
+      if (err) {
+        errors.push({ index, error: err.message });
+      }
+      checkFinish();
+    });
+  });
+
+  function checkFinish() {
+    executed++;
+    if (executed === total) {
+      if (errors.length > 0) {
+        res.status(500).json({ message: "Einige Updates konnten nicht ausgeführt werden.", errors });
+      } else {
+        res.json({ message: "Alle Updates wurden erfolgreich ausgeführt.", count: executed });
+      }
+    }
+  }
+});
+
+// Neuer Node-RED-Endpoint für die komplette DB
+const nodeRedFullDbUrl = 'http://192.168.10.31:1880/db/fullChanges';
+
+// Funktion, um die gesamte DB an Node-RED zu senden
+async function sendFullDbUpdate() {
+  sqliteDB.all("SELECT * FROM QHMI_VARIABLES", [], async (err, rows) => {
+    if (err) {
+      console.error("Fehler beim Abrufen der kompletten Datenbank:", err);
+      return;
+    }
+    try {
+      const { default: fetch } = await import('node-fetch');
+      const response = await fetch(nodeRedFullDbUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rows)
+      });
+      const data = await response.json();
+      console.log("Gesamte DB-Änderung erfolgreich gesendet:", data);
+    } catch (error) {
+      console.error("Fehler beim Senden der kompletten DB-Änderung:", error);
+    }
+  });
+}
 
 
 module.exports = router;
