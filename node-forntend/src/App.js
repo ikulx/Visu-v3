@@ -2,13 +2,15 @@
 import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Spin } from 'antd';
-import socket from './socket'; // Zentrale Socket-Instanz importieren
+import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
 
+// Lazy-Load der Seiten
 const LazyPage = React.lazy(() => import('./Page'));
+const LazySettingsPage = React.lazy(() => import('./SettingsPage')); // neue Settings-Seite
 
-// Rekursive Funktion, um alle Menüeinträge flach zu legen
+// Hilfsfunktion zum flachen Auslesen der Menüeinträge
 const flattenMenuItems = (items) => {
   let flat = [];
   items.forEach(item => {
@@ -35,10 +37,8 @@ function App() {
     };
   }, []);
 
-  // Alle Menüeinträge flach legen
   const flatMenuItems = flattenMenuItems(menuData.menuItems);
 
-  // Alle definierten SVG-Namen extrahieren und duplikate entfernen
   const allSvgs = useMemo(() => {
     const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
     return Array.from(new Set(svgNames));
@@ -76,6 +76,8 @@ function App() {
                 }
               />
             ))}
+            {/* Neue Route für die Settings-Seite */}
+            <Route path="/settings" element={<LazySettingsPage />} />
             <Route
               path="*"
               element={<div style={{ color: '#fff' }}>Bitte wähle eine Seite aus dem Menü</div>}

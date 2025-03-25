@@ -1,8 +1,7 @@
+// src/dbRoutes.js
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-// node-fetch wird hier nicht über require eingebunden, da es in Version 3 ESM-only ist
-
 const router = express.Router();
 
 // Node-RED-Endpoint (anpassen, falls erforderlich)
@@ -27,10 +26,8 @@ const allowedColumns = [
   "OPTI_fr", "OPTI_en", "OPTI_it", "beschreibung_fr", "beschreibung_en", "beschreibung_it"
 ];
 
-// Funktion, um bei einer Änderung der Spalte VAR_VALUE ein Update an Node-RED zu senden
 async function sendNodeRedUpdate(name, var_value) {
   try {
-    // Dynamischer Import von node-fetch, um den ESM-Only Fehler zu vermeiden
     const { default: fetch } = await import('node-fetch');
     const payload = {};
     payload[name] = var_value;
@@ -46,8 +43,42 @@ async function sendNodeRedUpdate(name, var_value) {
   }
 }
 
+// Funktion zum Senden der kompletten DB an Node-RED
+async function sendFullDbUpdate() {
+  sqliteDB.all("SELECT * FROM QHMI_VARIABLES", [], async (err, rows) => {
+    if (err) {
+      console.error("Fehler beim Abrufen der kompletten Datenbank:", err);
+      return;
+    }
+    try {
+      const { default: fetch } = await import('node-fetch');
+      const response = await fetch('http://192.168.10.31:1880/db/fullChanges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rows)
+      });
+      const data = await response.json();
+      console.log("Gesamte DB-Änderung erfolgreich gesendet:", data);
+    } catch (error) {
+      console.error("Fehler beim Senden der kompletten DB-Änderung:", error);
+    }
+  });
+}
+
+// Funktion zum Broadcasten der Settings über Socket.IO
+function broadcastSettings() {
+  const sql = "SELECT NAME, NAME_de, NAME_fr, NAME_en, NAME_it, visible, VAR_VALUE FROM QHMI_VARIABLES";
+  sqliteDB.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error("Fehler beim Abrufen der Settings:", err);
+      return;
+    }
+    // Nutze die globale Socket.IO-Instanz, die in server.js gesetzt wurde
+    global.io.emit("settings-update", rows);
+  });
+}
+
 // Endpunkt zum Aktualisieren von Werten in der SQLite-Datenbank
-// Beispiel-JSON: { "key": "NAME", "search": "Name 1", "target": "VAR_VALUE", "value": "Name neu" }
 router.post('/update-variable', (req, res) => {
   const { key, search, target, value } = req.body;
   
@@ -63,20 +94,18 @@ router.post('/update-variable', (req, res) => {
       return res.status(500).json({ error: "Fehler beim Aktualisieren der Datenbank." });
     }
     
-    // Falls die geänderte Spalte VAR_VALUE ist, sende Update an Node-RED
     if (target === "VAR_VALUE") {
       sendNodeRedUpdate(search, value);
     }
     
-    // Sende zusätzlich die komplette DB an den neuen Endpoint
     sendFullDbUpdate();
+    broadcastSettings();
     
     res.json({ message: "Datenbank erfolgreich aktualisiert.", changes: this.changes });
   });
 });
 
-
-// Endpunkt zum Abrufen aller VAR_VALUE-Werte als Array von JSON-Objekten
+// Endpunkt zum Abrufen aller VAR_VALUE-Werte
 router.get('/getAllValue', (req, res) => {
   const sql = `SELECT NAME, VAR_VALUE FROM QHMI_VARIABLES`;
   sqliteDB.all(sql, [], (err, rows) => {
@@ -84,13 +113,11 @@ router.get('/getAllValue', (req, res) => {
       console.error("Fehler bei der Datenbankabfrage:", err);
       return res.status(500).json({ error: "Fehler beim Abfragen der Datenbank." });
     }
-    // rows ist ein Array von Objekten, z. B.:
-    // [ { NAME: "Name 1", VAR_VALUE: "Wert 1" }, { NAME: "Name 2", VAR_VALUE: "Wert 2" } ]
     res.json(rows);
   });
 });
 
-// Neuer Endpunkt zum Ausführen mehrerer Updates
+// Endpunkt für Batch-Updates
 router.post('/update-batch', (req, res) => {
   const { updates } = req.body;
   if (!Array.isArray(updates)) {
@@ -101,7 +128,6 @@ router.post('/update-batch', (req, res) => {
   let executed = 0;
   const total = updates.length;
 
-  // Abarbeiten der Updates
   updates.forEach((updateObj, index) => {
     if (!updateObj.sql || !updateObj.params) {
       errors.push({ index, error: "Ungültiges Update-Objekt" });
@@ -119,6 +145,7 @@ router.post('/update-batch', (req, res) => {
   function checkFinish() {
     executed++;
     if (executed === total) {
+      broadcastSettings();
       if (errors.length > 0) {
         res.status(500).json({ message: "Einige Updates konnten nicht ausgeführt werden.", errors });
       } else {
@@ -127,31 +154,5 @@ router.post('/update-batch', (req, res) => {
     }
   }
 });
-
-// Neuer Node-RED-Endpoint für die komplette DB
-const nodeRedFullDbUrl = 'http://192.168.10.31:1880/db/fullChanges';
-
-// Funktion, um die gesamte DB an Node-RED zu senden
-async function sendFullDbUpdate() {
-  sqliteDB.all("SELECT * FROM QHMI_VARIABLES", [], async (err, rows) => {
-    if (err) {
-      console.error("Fehler beim Abrufen der kompletten Datenbank:", err);
-      return;
-    }
-    try {
-      const { default: fetch } = await import('node-fetch');
-      const response = await fetch(nodeRedFullDbUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rows)
-      });
-      const data = await response.json();
-      console.log("Gesamte DB-Änderung erfolgreich gesendet:", data);
-    } catch (error) {
-      console.error("Fehler beim Senden der kompletten DB-Änderung:", error);
-    }
-  });
-}
-
 
 module.exports = router;
