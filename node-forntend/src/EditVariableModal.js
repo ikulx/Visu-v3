@@ -1,37 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, Input, Select, InputNumber, Grid } from 'antd';
+import { Modal, Input, Select, Grid, Button } from 'antd';
+import { SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import socket from './socket';
 import SwissKeyboard from './SwissKeyboard';
 import NumericKeypad from './NumericKeypad';
+import AdminVariableModal from './AdminVariableModal';
+import { useUser } from './UserContext';
 
 const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
   const { i18n } = useTranslation();
   const { xs } = Grid.useBreakpoint();
+  const { currentUser } = useUser();
   const currentLang = i18n.language || 'en';
   const [value, setValue] = useState(record ? record.VAR_VALUE : '');
   
-  // Für den Textmodus: virtuelle Tastatur
+  // Für Textmodus: virtuelle Tastatur
   const [keyboardMode, setKeyboardMode] = useState('letters');
   const [isUppercase, setIsUppercase] = useState(true);
   
-  // useRef für das Input-Feld
+  // useRef für das Input-Feld (um den Cursor zu steuern)
   const inputRef = useRef(null);
-
+  
+  // State für Admin-Popup (Benutzerzuordnung)
+  const [adminModalVisible, setAdminModalVisible] = useState(false);
+  
   const isNativeKeyboardAvailable = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
+  
   useEffect(() => {
     if (record) {
       setValue(record.VAR_VALUE);
     }
   }, [record]);
-
+  
   useEffect(() => {
     if (visible && inputRef.current) {
       inputRef.current.focus();
     }
   }, [visible]);
-
+  
   const getOptions = () => {
     let optionsString = '';
     if (currentLang === 'de') {
@@ -51,7 +58,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
         return { value: key, label: label };
       });
   };
-
+  
   const handleUpdate = () => {
     const payload = {
       key: 'NAME',
@@ -62,8 +69,8 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
     socket.emit("update-variable", payload);
     onUpdateSuccess(record, value);
   };
-
-  // Hilfsfunktionen für Einfügen und Löschen an der aktuellen Cursorposition
+  
+  // Einfügen und Löschen an der aktuellen Cursorposition
   const insertAtCursor = (newText) => {
     if (inputRef.current && inputRef.current.input) {
       const inputEl = inputRef.current.input;
@@ -80,7 +87,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
       setValue(prev => prev + newText);
     }
   };
-
+  
   const deleteAtCursor = () => {
     if (inputRef.current && inputRef.current.input) {
       const inputEl = inputRef.current.input;
@@ -102,7 +109,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
       setValue(prev => prev.slice(0, -1));
     }
   };
-
+  
   const handleKeyboardInput = (input) => {
     if (input === 'Löschen') {
       deleteAtCursor();
@@ -110,7 +117,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
       insertAtCursor(input);
     }
   };
-
+  
   // Cursor-Verschiebung
   const moveCursor = (offset) => {
     if (inputRef.current && inputRef.current.input) {
@@ -121,18 +128,18 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
       inputEl.focus();
     }
   };
-
+  
   const handleCursorLeft = () => moveCursor(-1);
   const handleCursorRight = () => moveCursor(1);
-
-  // Bei Abbruch: lokale Änderungen verwerfen
+  
+  // Beim Abbruch: lokale Änderungen verwerfen und den DB-Wert neu laden
   const handleCancel = () => {
     if (record) {
       setValue(record.VAR_VALUE);
     }
     onCancel();
   };
-
+  
   let content = null;
   if (record.TYPE === 'drop') {
     content = (
@@ -173,7 +180,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
   } else if (record.TYPE === 'num') {
     content = (
       <div>
-        {/* Eingabefeld und Einheit in einem Container, zentriert */}
+        {/* Eingabefeld und Einheit nebeneinander, zentriert */}
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
           <Input
             ref={inputRef}
@@ -182,13 +189,12 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
             placeholder="Wert"
             style={{ width: '20%', textAlign: 'center' }}
           />
-          <span style={{ color: '#fff', fontSize: '16px' }}>
-            {record.unit}
-          </span>
+          <span style={{ color: '#fff', fontSize: '16px' }}>{record.unit}</span>
         </div>
-        {/* Min- und Max-Wert unter dem Eingabefeld */}
+        {/* Anzeige von Min und Max unter dem Eingabefeld */}
         <div style={{ marginTop: '8px', color: '#aaa', fontSize: '14px', textAlign: 'center' }}>
-          <span>Min: {record.MIN}</span> <span style={{ marginLeft: '16px' }}>Max: {record.MAX}</span>
+          <span>Min: {record.MIN}</span>
+          <span style={{ marginLeft: '16px' }}>Max: {record.MAX}</span>
         </div>
         <NumericKeypad
           onInput={handleKeyboardInput}
@@ -200,31 +206,59 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
   } else {
     content = <div>Unbekannter Typ</div>;
   }
-
+  
   const modalWidth = xs ? "100vw" : "80vw";
-
+  
+  // Footer: Abbrechen, Zahnrad-Button und Speichern
+  const footerContent = (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+      
+      {(currentUser === 'admin' || currentUser === 'fachmann') && (
+        <Button
+          type="default"
+          icon={<SettingOutlined style={{ fontSize: '20px', color: '#fff' }} />}
+          onClick={() => setAdminModalVisible(true)}
+        />
+      )}
+      <Button onClick={handleCancel}>Abbrechen</Button>
+      <Button type="primary" onClick={handleUpdate}>Speichern</Button>
+    </div>
+  );
+  
   return (
-    <Modal
-      visible={visible}
-      title={`Wert bearbeiten: ${record ? record.NAME : ''}`}
-      onCancel={handleCancel}
-      onOk={handleUpdate}
-      centered
-      okText="Speichern"
-      cancelText="Abbrechen"
-      width={modalWidth}
-      styles={{
-        body: {
-          backgroundColor: '#141414',
-          color: '#fff',
-          padding: '20px',
-          minHeight: '60vh',
-          overflowY: 'auto',
-        },
-      }}
-    >
-      {content}
-    </Modal>
+    <>
+      <Modal
+        visible={visible}
+        title={`Wert bearbeiten: ${record ? record.NAME : ''}`}
+        onCancel={handleCancel}
+        footer={footerContent}
+        centered
+        width={modalWidth}
+        styles={{
+          body: {
+            backgroundColor: '#141414',
+            color: '#fff',
+            padding: '20px',
+            minHeight: '60vh',
+            overflowY: 'auto',
+          },
+        }}
+      >
+        {content}
+      </Modal>
+      {adminModalVisible && (
+        <AdminVariableModal
+          visible={adminModalVisible}
+          record={record}
+          onCancel={() => setAdminModalVisible(false)}
+          onUpdateSuccess={(rec, newUsers) => {
+            // Optional: Aktualisiere auch lokale Zustände, falls nötig
+            onUpdateSuccess(rec, value);
+            setAdminModalVisible(false);
+          }}
+        />
+      )}
+    </>
   );
 };
 

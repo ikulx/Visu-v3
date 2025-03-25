@@ -17,7 +17,7 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
-// Erlaubte Spaltennamen (Whitelist) aus dem Schema der Tabelle QHMI_VARIABLES
+// Erlaubte Spaltennamen (Whitelist)
 const allowedColumns = [
   "id", "NAME", "VAR_VALUE", "unit", "TYPE", "OPTI", "adresse", "faktor",
   "MIN", "MAX", "EDITOR", "sort", "visible", "HKL", "HKL_Feld",
@@ -43,7 +43,6 @@ async function sendNodeRedUpdate(name, var_value) {
   }
 }
 
-// Funktion zum Senden der kompletten DB an Node-RED
 async function sendFullDbUpdate() {
   sqliteDB.all("SELECT * FROM QHMI_VARIABLES", [], async (err, rows) => {
     if (err) {
@@ -65,27 +64,26 @@ async function sendFullDbUpdate() {
   });
 }
 
-// Funktion zum Broadcasten der Settings über Socket.IO
 function broadcastSettings() {
   const sql = `SELECT 
-  NAME, 
-  NAME_de, 
-  NAME_fr, 
-  NAME_en, 
-  NAME_it, 
-  VAR_VALUE, 
-  benutzer, 
-  visible, 
-  tag_top, 
-  tag_sub,
-  TYPE,
-  OPTI_de,
-  OPTI_fr,
-  OPTI_en,
-  OPTI_it,
-  MIN,
-  MAX,
-  unit
+    NAME, 
+    NAME_de, 
+    NAME_fr, 
+    NAME_en, 
+    NAME_it, 
+    VAR_VALUE, 
+    benutzer, 
+    visible, 
+    tag_top, 
+    tag_sub,
+    TYPE,
+    OPTI_de,
+    OPTI_fr,
+    OPTI_en,
+    OPTI_it,
+    MIN,
+    MAX,
+    unit
   FROM QHMI_VARIABLES`;
   sqliteDB.all(sql, [], (err, rows) => {
     if (err) {
@@ -97,7 +95,7 @@ function broadcastSettings() {
   });
 }
 
-// Endpunkt zum Aktualisieren von Werten in der SQLite-Datenbank
+// HTTP-Endpunkt zum Aktualisieren von Werten in der SQLite-Datenbank (außer "benutzer")
 router.post('/update-variable', (req, res) => {
   const { key, search, target, value } = req.body;
   
@@ -174,4 +172,97 @@ router.post('/update-batch', (req, res) => {
   }
 });
 
-module.exports = router;
+// Neuer Socket-Endpunkt für differenzielle Aktualisierung der Spalte "benutzer"
+// Erwartet Payload: { key, search, newUsers } wobei newUsers ein kommagetrennter String ist.
+function registerSocketHandlers(io) {
+  io.on('connection', (socket) => {
+    console.log('Neuer Client verbunden:', socket.id);
+    
+    socket.on('update-users-diff', (data, callback) => {
+      const { key, search, newUsers } = data;
+      
+      if (!allowedColumns.includes(key) || !allowedColumns.includes("benutzer")) {
+        if (callback) callback({ error: "Ungültige Spaltenangabe." });
+        return;
+      }
+      
+      const selectSql = `SELECT benutzer FROM QHMI_VARIABLES WHERE ${key} = ?`;
+      sqliteDB.get(selectSql, [search], (err, row) => {
+        if (err) {
+          console.error("Fehler beim Abrufen der aktuellen Benutzer:", err);
+          if (callback) callback({ error: "Fehler beim Abrufen der aktuellen Benutzer." });
+          return;
+        }
+        const currentUsers = row && row.benutzer 
+          ? row.benutzer.split(',').map(u => u.trim()).filter(u => u)
+          : [];
+        // newUsers vom Frontend als kommagetrennter String in ein Array umwandeln;
+        // falls newUsers undefined ist, wird ein leerer String genutzt.
+        const desiredUsers = (typeof newUsers === 'string' ? newUsers : '')
+          .split(',').map(u => u.trim()).filter(u => u);
+        
+        console.log("Current Users:", currentUsers);
+        console.log("Desired Users:", desiredUsers);
+        
+        // Falls keine Änderung vorliegt, Rückmeldung senden.
+        if (JSON.stringify(currentUsers.sort()) === JSON.stringify(desiredUsers.sort())) {
+          if (callback) callback({ message: "Keine Änderung." });
+          return;
+        }
+        
+        const newBenutzer = desiredUsers.join(', ');
+        const updateSql = `UPDATE QHMI_VARIABLES SET benutzer = ? WHERE ${key} = ?`;
+        sqliteDB.run(updateSql, [newBenutzer, search], function(err) {
+          if (err) {
+            console.error("Fehler beim Aktualisieren der Benutzer:", err);
+            if (callback) callback({ error: "Fehler beim Aktualisieren der Benutzer." });
+            return;
+          }
+          sendFullDbUpdate();
+          broadcastSettings();
+          if (callback) callback({ message: "Benutzer erfolgreich aktualisiert.", changes: this.changes, updatedUsers: desiredUsers });
+        });
+      });
+    });
+    
+    // Vorhandene Socket-Events
+    socket.on('update-variable', (payload) => {
+      if (!payload.key || !payload.search || !payload.target) {
+        socket.emit("update-error", { message: "Ungültiger Payload" });
+        return;
+      }
+      const sql = `UPDATE QHMI_VARIABLES SET ${payload.target} = ? WHERE ${payload.key} = ?`;
+      sqliteDB.run(sql, [payload.value, payload.search], function(err) {
+        if (err) {
+          console.error("Fehler beim Aktualisieren der Datenbank:", err);
+          socket.emit("update-error", { message: "Fehler beim Aktualisieren der Datenbank." });
+          return;
+        }
+        if (payload.target === "VAR_VALUE") {
+          sendNodeRedUpdate(payload.search, payload.value);
+        }
+        sendFullDbUpdate();
+        broadcastSettings();
+        socket.emit("update-success", { changes: this.changes });
+      });
+    });
+    
+    socket.on('set-user', (data) => {
+      socket.loggedInUser = data.user;
+      console.log(`Socket ${socket.id} registriert Benutzer: ${data.user}`);
+      broadcastSettings();
+    });
+    
+    socket.on('request-settings', (data) => {
+      const user = data && data.user ? data.user : null;
+      socket.loggedInUser = user;
+      broadcastSettings();
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('Client getrennt:', socket.id);
+    });
+  });
+}
+
+module.exports = { router, registerSocketHandlers };

@@ -12,7 +12,8 @@ import { useTranslation } from 'react-i18next';
 import './HeaderComponent.css';
 import PinLogin from './PinLogin';
 import SettingsPage from '../SettingsPage';
-import pinMapping from '../pinMapping.json'; // Import der PIN-Zuordnung
+import pinMapping from '../pinMapping.json'; // Externe PIN-Zuordnung
+import { useUser } from '../UserContext';
 
 const { useBreakpoint } = Grid;
 
@@ -21,15 +22,15 @@ const HeaderComponent = ({ menuItems }) => {
   const location = useLocation();
   const screens = useBreakpoint();
   const navigate = useNavigate();
+  const { currentUser, setCurrentUser } = useUser();
 
-  // Zustände für Drawer, Sprachmodal, Pin-Modal, Settings-Popup und Benutzerstatus
+  // Zustände für Drawer, Sprachmodal, Pin-Modal, Settings-Popup
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [settingsPopupVisible, setSettingsPopupVisible] = useState(false);
-  const [loggedInUser, setLoggedInUser] = useState(null);
 
-  // Verwende die externe PIN-Zuordnung
+  // PIN-Zuordnung aus der externen Datei
   const validUsers = pinMapping;
 
   // Funktion zum Erstellen von Menüeinträgen (inkl. Untermenüs)
@@ -121,7 +122,7 @@ const HeaderComponent = ({ menuItems }) => {
         <Radio value="it">Italiano</Radio>
       </Radio.Group>
       <div style={{ marginTop: '20px', textAlign: 'center' }}>
-        {!loggedInUser ? (
+        {!currentUser ? (
           <Button
             type="primary"
             onClick={() => {
@@ -143,7 +144,7 @@ const HeaderComponent = ({ menuItems }) => {
             >
               <SettingOutlined /> {t('Settings')}
             </Button>
-            <Button type="default" onClick={() => setLoggedInUser(null)}>
+            <Button type="default" onClick={() => setCurrentUser(null)}>
               <LogoutOutlined /> {t('Logout')}
             </Button>
           </div>
@@ -185,7 +186,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={pinModalVisible}
           validUsers={validUsers}
           onSuccess={(user) => {
-            setLoggedInUser(user);
+            setCurrentUser(user);
             setPinModalVisible(false);
           }}
           onCancel={() => setPinModalVisible(false)}
@@ -194,7 +195,7 @@ const HeaderComponent = ({ menuItems }) => {
           <SettingsPage
             visible={settingsPopupVisible}
             onClose={() => setSettingsPopupVisible(false)}
-            user={loggedInUser}
+            user={currentUser}
           />
         )}
       </div>
@@ -258,7 +259,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={pinModalVisible}
           validUsers={validUsers}
           onSuccess={(user) => {
-            setLoggedInUser(user);
+            setCurrentUser(user);
             setPinModalVisible(false);
           }}
           onCancel={() => setPinModalVisible(false)}
@@ -267,7 +268,7 @@ const HeaderComponent = ({ menuItems }) => {
           <SettingsPage
             visible={settingsPopupVisible}
             onClose={() => setSettingsPopupVisible(false)}
-            user={loggedInUser}
+            user={currentUser}
           />
         )}
       </div>

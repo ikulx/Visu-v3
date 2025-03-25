@@ -6,6 +6,7 @@ import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
 
+
 // Lazy-Load der Seiten
 const LazyPage = React.lazy(() => import('./Page'));
 const LazySettingsPage = React.lazy(() => import('./SettingsPage')); // neue Settings-Seite

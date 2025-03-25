@@ -6,6 +6,7 @@ import App from './App';
 import 'antd/dist/reset.css';
 import './index.css';
 import './i18n';
+import { UserProvider } from './UserContext';
 
 const darkTheme = {
   token: {
@@ -44,8 +45,10 @@ const darkTheme = {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
+    <UserProvider>
     <ConfigProvider theme={darkTheme}>
       <App />
     </ConfigProvider>
+    </UserProvider>
   </React.StrictMode>
 );
