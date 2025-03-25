@@ -1,7 +1,8 @@
 // src/App.js
 import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { Spin, Modal } from 'antd'; // Modal statt notification verwenden
+import { Spin, Modal } from 'antd';
+import { useTranslation } from 'react-i18next'; // Hook für Übersetzungen
 import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
@@ -25,9 +26,10 @@ const flattenMenuItems = (items) => {
 };
 
 function App() {
+  const { t } = useTranslation(); // Zugriff auf Übersetzungen
   const [menuData, setMenuData] = useState({ menuItems: [] });
   const [isConnected, setIsConnected] = useState(socket.connected);
-  const [connectionError, setConnectionError] = useState(null); // Fehlerstatus
+  const [connectionError, setConnectionError] = useState(null);
 
   useEffect(() => {
     // Socket-Listener für Menü-Updates
@@ -46,19 +48,19 @@ function App() {
     const onDisconnect = () => {
       console.log('Socket disconnected');
       setIsConnected(false);
-      setConnectionError('Verbindung zum Server unterbrochen');
+      setConnectionError(t('connectionLost')); // Übersetzte Nachricht
     };
 
     const onConnectError = (error) => {
       console.log('Socket connect error:', error.message);
       setIsConnected(false);
-      setConnectionError(`Verbindungsfehler: ${error.message || 'Unbekannter Fehler'}`);
+      setConnectionError(t('connectionError', { message: error.message || 'Unknown error' }));
     };
 
     const onReconnectError = (error) => {
       console.log('Socket reconnect error:', error.message);
       setIsConnected(false);
-      setConnectionError(`Wiederverbindungsfehler: ${error.message || 'Unbekannter Fehler'}`);
+      setConnectionError(t('reconnectError', { message: error.message || 'Unknown error' }));
     };
 
     // Socket-Listener hinzufügen
@@ -70,7 +72,7 @@ function App() {
     // Initialer Status prüfen
     console.log('Initial socket status:', socket.connected);
     if (!socket.connected) {
-      setConnectionError('Keine Verbindung zum Server beim Start');
+      setConnectionError(t('initialConnectionError'));
     }
 
     // Cleanup bei Unmount
@@ -81,7 +83,7 @@ function App() {
       socket.off('connect_error', onConnectError);
       socket.off('reconnect_error', onReconnectError);
     };
-  }, []);
+  }, [t]); // t als Abhängigkeit, damit Übersetzungen aktualisiert werden
 
   const flatMenuItems = flattenMenuItems(menuData.menuItems);
 
@@ -134,17 +136,17 @@ function App() {
       {/* Vollbild-Benachrichtigung als Modal */}
       <Modal
         visible={!!connectionError} // Sichtbar, wenn connectionError gesetzt ist
-        footer={null} // Keine Schaltflächen am unteren Rand
-        closable={false} // Kein Schließen-Button
-        maskClosable={false} // Nicht durch Klick auf Hintergrund schließbar
-        width={'100%'}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        width="100%"
+        
         centered
         
-        style={{ top: 0, padding: 0 }} // Oben ausgerichtet, kein Padding
-        bodyStyle={{
-          // height: '100vh',
-          
-          backgroundColor: 'rgba(255, 0, 0, 0.9)', // Roter Hintergrund mit Transparenz
+        style={{ top: 0, padding: 0 }}
+        styles ={{body:{
+          height: '100%',
+          backgroundColor: 'rgba(255, 0, 0, 0.9)',
           color: '#fff',
           display: 'flex',
           justifyContent: 'center',
@@ -152,12 +154,12 @@ function App() {
           fontSize: '24px',
           textAlign: 'center',
           padding: '20px'
-        }}
+        }}}
       >
         <div>
-          <h2>Verbindungsproblem</h2>
+          <h2>{t('connectionLostTitle')}</h2>
           <p>{connectionError}</p>
-          <p>Versuche, die Verbindung wiederherzustellen...</p>
+          <p>{t('reconnecting')}</p>
         </div>
       </Modal>
     </Router>

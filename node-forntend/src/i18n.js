@@ -21,8 +21,14 @@ const resources = {
       "EZ06": "Erzeuger 06",
       "BWW": "WARMWASSER",
       "HG": "HEIZGRUPPE",
-      "PS": "SPEICHER"
-
+      "PS": "SPEICHER",
+      // Neue Übersetzungen für Verbindungsfehler
+      connectionLostTitle: "Verbindungsproblem",
+      connectionLost: "Verbindung zum Server unterbrochen",
+      connectionError: "Verbindungsfehler: {{message}}",
+      reconnectError: "Wiederverbindungsfehler: {{message}}",
+      initialConnectionError: "Keine Verbindung zum Server beim Start",
+      reconnecting: "Versuche, die Verbindung wiederherzustellen..."
     }
   },
   en: {
@@ -42,7 +48,14 @@ const resources = {
       "EZ06": "GENERATOR 06",
       "BWW": "HOT WATER",
       "HG": "HEATING GROUP",
-      "PS": "SPEICHER"
+      "PS": "STORAGE",
+      // Neue Übersetzungen für Verbindungsfehler
+      connectionLostTitle: "Connection Issue",
+      connectionLost: "Connection to server lost",
+      connectionError: "Connection error: {{message}}",
+      reconnectError: "Reconnection error: {{message}}",
+      initialConnectionError: "No connection to server on startup",
+      reconnecting: "Attempting to reconnect..."
     }
   },
   fr: {
@@ -62,8 +75,14 @@ const resources = {
       "EZ06": "GÉNÉRATEUR 06",
       "BWW": "EAU CHAUDE",
       "HG": "GROUPE DE CHAUFFAGE",
-      "PS": "SPEICHER"
-
+      "PS": "STOCKAGE",
+      // Neue Übersetzungen für Verbindungsfehler
+      connectionLostTitle: "Problème de connexion",
+      connectionLost: "Connexion au serveur perdue",
+      connectionError: "Erreur de connexion: {{message}}",
+      reconnectError: "Erreur de reconnexion: {{message}}",
+      initialConnectionError: "Aucune connexion au serveur au démarrage",
+      reconnecting: "Tentative de reconnexion..."
     }
   },
   it: {
@@ -83,8 +102,14 @@ const resources = {
       "EZ06": "GENERATORE 06",
       "BWW": "ACQUA CALDA",
       "HG": "GRUPPO RISCALDAMENTO",
-      "PS": "MEMORIA"
-
+      "PS": "MEMORIA",
+      // Neue Übersetzungen für Verbindungsfehler
+      connectionLostTitle: "Problema di connessione",
+      connectionLost: "Connessione al server persa",
+      connectionError: "Errore di connessione: {{message}}",
+      reconnectError: "Errore di riconnessione: {{message}}",
+      initialConnectionError: "Nessuna connessione al server all'avvio",
+      reconnecting: "Tentativo di riconnessione..."
     }
   }
 };
