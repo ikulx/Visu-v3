@@ -111,10 +111,6 @@ app.post('/setFooter', (req, res) => {
   res.sendStatus(200);
 });
 
-//
-// Datenbankfunktionen
-//
-
 // Erstelle die SQLite-Datenbank-Verbindung (hier im globalen Scope)
 const dbPath = path.join(__dirname, 'external', 'ycontroldata_settings.db');
 const sqliteDB = new sqlite3.Database(dbPath, (err) => {
@@ -218,9 +214,7 @@ function broadcastSettings(socket = null, user = null) {
   });
 }
 
-//
 // Socket.IO-Verbindungen
-//
 io.on('connection', (socket) => {
   console.log('Neuer Client verbunden:', socket.id);
   socket.emit('menu-update', currentMenu);
@@ -244,9 +238,19 @@ io.on('connection', (socket) => {
 
   // Update-Variable via Socket (statt HTTP)
   socket.on('update-variable', (payload) => {
-    // Erwarteter Payload: { key, search, target, value }
     if (!payload.key || !payload.search || !payload.target) {
       socket.emit("update-error", { message: "Ungültiger Payload" });
+      return;
+    }
+
+    // Whitelist check for allowed columns
+    const allowedColumns = [
+      "NAME", "VAR_VALUE", "benutzer", "visible", "tag_top", "tag_sub", "TYPE",
+      "OPTI_de", "OPTI_fr", "OPTI_en", "OPTI_it", "MIN", "MAX", "unit",
+      "NAME_de", "NAME_fr", "NAME_en", "NAME_it"
+    ];
+    if (!allowedColumns.includes(payload.target) || !allowedColumns.includes(payload.key)) {
+      socket.emit("update-error", { message: "Ungültige Spaltenangabe." });
       return;
     }
 

@@ -1,12 +1,15 @@
+// src/SettingsPage.js
 import React, { useEffect, useState, useMemo } from 'react';
 import { Modal, Table, Menu, Grid, Drawer, Button } from 'antd';
 import { useTranslation } from 'react-i18next';
 import socket from './socket';
 import EditVariableModal from './EditVariableModal';
+import { useUser } from './UserContext'; // Import useUser to access loggedInUser
 
 const SettingsPage = ({ visible, onClose, user }) => {
   const { t, i18n } = useTranslation();
-  const { xs } = Grid.useBreakpoint(); // Für responsive Anpassungen
+  const { xs } = Grid.useBreakpoint();
+  const { loggedInUser } = useUser(); // Get the currently logged-in user from context
 
   const [settingsData, setSettingsData] = useState([]);
   const [selectedMain, setSelectedMain] = useState(null);
@@ -19,27 +22,27 @@ const SettingsPage = ({ visible, onClose, user }) => {
 
   // Daten abrufen, wenn das Modal sichtbar ist und ein Benutzer vorhanden ist
   useEffect(() => {
-    if (visible && user) {
-      socket.emit('request-settings', { user });
+    if (visible && loggedInUser) {
+      socket.emit('request-settings', { user: loggedInUser });
     }
-  }, [visible, user]);
+  }, [visible, loggedInUser]);
 
   // Socket-Listener für Settings-Updates
   useEffect(() => {
     const handleSettingsUpdate = (data) => {
-      setSettingsData(prevData => {
-        const updatedDataMap = new Map(prevData.map(row => [row.NAME, row]));
-        data.forEach(newRow => {
-          updatedDataMap.set(newRow.NAME, { ...updatedDataMap.get(newRow.NAME), ...newRow });
-        });
-        return Array.from(updatedDataMap.values());
+      // Filtere die empfangenen Daten basierend auf dem aktuell angemeldeten Benutzer
+      const filteredData = data.filter(row => {
+        if (!row.benutzer) return false;
+        const allowedUsers = row.benutzer.split(',').map(u => u.trim().toLowerCase());
+        return allowedUsers.includes(loggedInUser?.toLowerCase());
       });
+      setSettingsData(filteredData);
     };
     socket.on("settings-update", handleSettingsUpdate);
     return () => {
       socket.off("settings-update", handleSettingsUpdate);
     };
-  }, []);
+  }, [loggedInUser]); // Abhängigkeit von loggedInUser, damit der Filter bei Benutzerwechsel aktualisiert wird
 
   const lang = i18n.language || 'en';
   const nameField =
@@ -153,7 +156,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
       key: 'VAR_VALUE',
       render: (text, record) => {
         if (record.TYPE === 'drop') {
-          // Wähle basierend auf der aktuellen Sprache das entsprechende OPTI-Feld
           let optionsString = '';
           if (i18n.language === 'de') {
             optionsString = record.OPTI_de;
@@ -164,7 +166,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
           } else {
             optionsString = record.OPTI_en;
           }
-          // Erwartetes Format: "0: Nicht vorhanden,1: Direktheizkreis,2: Mischheizkreis,3: Einspritzung"
           const options = optionsString
             .split(',')
             .filter(opt => opt.trim() !== '')
@@ -215,7 +216,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
       maskProps={{ style: { backgroundColor: 'rgba(0,0,0,0.7)' } }}
     >
       {xs ? (
-        // Mobile Ansicht: Header mit Menübutton, Tabelle im Hauptbereich, Drawer für das Menü
         <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 100px)' }}>
           <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#1f1f1f', padding: '10px', borderBottom: '1px solid #333' }}>
             <Button
@@ -249,13 +249,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
           >
             <Menu
               mode="inline"
-              selectedKeys={[
-                selectedSub
-                  ? `${selectedMain}___${selectedSub}`
-                  : groupedData[selectedMain] && groupedData[selectedMain].noSub.length > 0
-                  ? `${selectedMain}___nosub`
-                  : selectedMain,
-              ]}
+              selectedKeys={[selectedSub ? `${selectedMain}___${selectedSub}` : `${selectedMain}___nosub`]}
               onClick={onMenuClick}
               items={menuItems}
               style={{ backgroundColor: '#1f1f1f', color: '#fff' }}
@@ -263,18 +257,11 @@ const SettingsPage = ({ visible, onClose, user }) => {
           </Drawer>
         </div>
       ) : (
-        // Desktop Ansicht: Zweispaltiges Layout mit festem Menü links und Tabelle rechts
         <div style={{ display: 'flex', flexDirection: 'row', height: 'calc(100vh - 100px)', backgroundColor: '#141414' }}>
           <div style={{ width: '250px', borderRight: '1px solid #333', padding: '10px', overflowY: 'auto', backgroundColor: '#1f1f1f' }}>
             <Menu
               mode="inline"
-              selectedKeys={[
-                selectedSub
-                  ? `${selectedMain}___${selectedSub}`
-                  : groupedData[selectedMain] && groupedData[selectedMain].noSub.length > 0
-                  ? `${selectedMain}___nosub`
-                  : selectedMain,
-              ]}
+              selectedKeys={[selectedSub ? `${selectedMain}___${selectedSub}` : `${selectedMain}___nosub`]}
               onClick={onMenuClick}
               items={menuItems}
               style={{ backgroundColor: '#1f1f1f', color: '#fff' }}

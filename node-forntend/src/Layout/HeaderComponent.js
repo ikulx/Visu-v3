@@ -1,3 +1,4 @@
+// src/HeaderComponent.js
 import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button, Modal, Radio } from 'antd';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -12,7 +13,8 @@ import { useTranslation } from 'react-i18next';
 import './HeaderComponent.css';
 import PinLogin from './PinLogin';
 import SettingsPage from '../SettingsPage';
-import pinMapping from '../pinMapping.json'; // Import der PIN-Zuordnung
+import pinMapping from '../pinMapping.json';
+import { useUser } from '../UserContext'; // Import useUser
 
 const { useBreakpoint } = Grid;
 
@@ -22,17 +24,15 @@ const HeaderComponent = ({ menuItems }) => {
   const screens = useBreakpoint();
   const navigate = useNavigate();
 
-  // Zustände für Drawer, Sprachmodal, Pin-Modal, Settings-Popup und Benutzerstatus
+  const { loggedInUser, setLoggedInUser } = useUser(); // Use global user state
+
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [settingsPopupVisible, setSettingsPopupVisible] = useState(false);
-  const [loggedInUser, setLoggedInUser] = useState(null);
 
-  // Verwende die externe PIN-Zuordnung
   const validUsers = pinMapping;
 
-  // Funktion zum Erstellen von Menüeinträgen (inkl. Untermenüs)
   const createMenuItem = (item) => {
     if (item.sub && Array.isArray(item.sub)) {
       const enabledChildren = item.sub.filter(
@@ -82,7 +82,6 @@ const HeaderComponent = ({ menuItems }) => {
   const isHomeActive = location.pathname === '/';
   const activeColor = "#ffb000";
 
-  // Home-Button
   const homeButton = (
     <Button
       className="header-home-button"
@@ -104,7 +103,6 @@ const HeaderComponent = ({ menuItems }) => {
     />
   );
 
-  // Sprachwahl-Popup inkl. Login, Settings und Logout
   const languageModal = (
     <Modal
       title="Sprache ändern"
@@ -185,7 +183,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={pinModalVisible}
           validUsers={validUsers}
           onSuccess={(user) => {
-            setLoggedInUser(user);
+            setLoggedInUser(user); // Update global state
             setPinModalVisible(false);
           }}
           onCancel={() => setPinModalVisible(false)}
@@ -258,7 +256,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={pinModalVisible}
           validUsers={validUsers}
           onSuccess={(user) => {
-            setLoggedInUser(user);
+            setLoggedInUser(user); // Update global state
             setPinModalVisible(false);
           }}
           onCancel={() => setPinModalVisible(false)}

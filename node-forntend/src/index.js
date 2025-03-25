@@ -2,6 +2,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ConfigProvider } from 'antd';
+import { UserProvider } from './UserContext';
 import App from './App';
 import 'antd/dist/reset.css';
 import './index.css';
@@ -44,8 +45,10 @@ const darkTheme = {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
+    <UserProvider>
     <ConfigProvider theme={darkTheme}>
       <App />
     </ConfigProvider>
+    </UserProvider>
   </React.StrictMode>
 );
