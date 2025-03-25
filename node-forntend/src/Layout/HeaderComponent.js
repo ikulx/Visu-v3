@@ -8,6 +8,7 @@ import {
   UserOutlined,
   SettingOutlined,
   LogoutOutlined,
+  LoginOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import './HeaderComponent.css';
@@ -105,14 +106,22 @@ const HeaderComponent = ({ menuItems }) => {
 
   const languageModal = (
     <Modal
-      title="Sprache ändern"
+      
       open={languageModalVisible}
       onCancel={() => setLanguageModalVisible(false)}
       footer={null}
       centered
       maskProps={{ style: { backgroundColor: 'rgba(0,0,0,0.7)' } }}
+      styles={{boddy:{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        minHeight: '200px', // Mindesthöhe für Zentrierun
+        }}}
     >
-      <Radio.Group onChange={(e) => i18n.changeLanguage(e.target.value)} defaultValue={i18n.language}>
+      <Radio.Group optionType="button" size="large"  onChange={(e) => i18n.changeLanguage(e.target.value)} defaultValue={i18n.language}  >
         <Radio value="de">Deutsch</Radio>
         <Radio value="en">English</Radio>
         <Radio value="fr">Français</Radio>
@@ -121,13 +130,15 @@ const HeaderComponent = ({ menuItems }) => {
       <div style={{ marginTop: '20px', textAlign: 'center' }}>
         {!loggedInUser ? (
           <Button
-            type="primary"
+            type="default"
             onClick={() => {
               setLanguageModalVisible(false);
               setPinModalVisible(true);
             }}
+            style={{ marginRight: '10px' ,backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}
           >
-            {t('Login')}
+            <LoginOutlined style={{ fontSize: '30px' }} />
+            
           </Button>
         ) : (
           <div style={{ marginTop: '20px' }}>
@@ -137,12 +148,12 @@ const HeaderComponent = ({ menuItems }) => {
                 setLanguageModalVisible(false);
                 setSettingsPopupVisible(true);
               }}
-              style={{ marginRight: '10px' }}
+              style={{ marginRight: '10px' ,backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}
             >
-              <SettingOutlined /> {t('Settings')}
+              <SettingOutlined style={{ fontSize: '30px' }}/> 
             </Button>
-            <Button type="default" onClick={() => setLoggedInUser(null)}>
-              <LogoutOutlined /> {t('Logout')}
+            <Button type="default" onClick={() => setLoggedInUser(null)} style={{ backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}>
+              <LogoutOutlined style={{ fontSize: '30px' }} /> 
             </Button>
           </div>
         )}
