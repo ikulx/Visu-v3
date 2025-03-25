@@ -22,15 +22,17 @@ const darkTheme = {
     Menu: {
       itemBg: '#383838',           // Hintergrund für Menüpunkte
       itemColor: '#fff',           // Textfarbe für Menüpunkte
-      itemHoverBg: '#ecc97d',      // Hover-Hintergrund
+      itemHoverBg: 'none',      // Hover-Hintergrund
       itemHoverColor: '#fff',      // Hover-Textfarbe
       itemSelectedBg: '#ffb000',   // Ausgewählter Hintergrund
       itemSelectedColor: '#fff',   // Ausgewählte Textfarbe
     },
     Button: {
-      colorPrimary: '#177ddc',     // Primäre Button-Farbe
-      colorPrimaryHover: '#40a9ff', // Hover-Farbe
+      colorPrimary: '#ffb000',     // Primäre Button-Farbe
+      colorPrimaryHover: 'none', // Hover-Farbe
+      border: 'none',
     },
+    
     Layout: {
       headerBg: '#383838',         // Header-Hintergrund
       footerBg: '#383838',         // Footer-Hintergrund

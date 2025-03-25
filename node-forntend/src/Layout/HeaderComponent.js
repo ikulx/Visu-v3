@@ -1,4 +1,3 @@
-// src/HeaderComponent.js
 import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button, Modal, Radio } from 'antd';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -13,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import './HeaderComponent.css';
 import PinLogin from './PinLogin';
 import SettingsPage from '../SettingsPage';
+import pinMapping from '../pinMapping.json'; // Import der PIN-Zuordnung
 
 const { useBreakpoint } = Grid;
 
@@ -29,11 +29,8 @@ const HeaderComponent = ({ menuItems }) => {
   const [settingsPopupVisible, setSettingsPopupVisible] = useState(false);
   const [loggedInUser, setLoggedInUser] = useState(null);
 
-  // Beispielhafte Liste gültiger Benutzer (PIN: Benutzername)
-  const validUsers = {
-    "1111": "fachmann",
-    "2222": "user1",
-  };
+  // Verwende die externe PIN-Zuordnung
+  const validUsers = pinMapping;
 
   // Funktion zum Erstellen von Menüeinträgen (inkl. Untermenüs)
   const createMenuItem = (item) => {

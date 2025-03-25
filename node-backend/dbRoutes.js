@@ -67,7 +67,26 @@ async function sendFullDbUpdate() {
 
 // Funktion zum Broadcasten der Settings über Socket.IO
 function broadcastSettings() {
-  const sql = "SELECT NAME, NAME_de, NAME_fr, NAME_en, NAME_it, visible, VAR_VALUE FROM QHMI_VARIABLES";
+  const sql = `SELECT 
+  NAME, 
+  NAME_de, 
+  NAME_fr, 
+  NAME_en, 
+  NAME_it, 
+  VAR_VALUE, 
+  benutzer, 
+  visible, 
+  tag_top, 
+  tag_sub,
+  TYPE,
+  OPTI_de,
+  OPTI_fr,
+  OPTI_en,
+  OPTI_it,
+  MIN,
+  MAX,
+  unit
+  FROM QHMI_VARIABLES`;
   sqliteDB.all(sql, [], (err, rows) => {
     if (err) {
       console.error("Fehler beim Abrufen der Settings:", err);

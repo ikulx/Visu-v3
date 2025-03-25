@@ -16,3 +16,24 @@ html, body, #root {
   align-items: center;
 }
 
+/* Für Webkit-Browser */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2e2e2e; /* dunkler Hintergrund */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #555; /* dunkler Daumen */
+  border-radius: 4px;
+  border: 2px solid #2e2e2e;
+}
+
+/* Für Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #555 #2e2e2e;
+}
