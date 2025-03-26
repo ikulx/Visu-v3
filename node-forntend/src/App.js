@@ -127,7 +127,7 @@ function App() {
             <Route path="/settings" element={<LazySettingsPage />} />
             <Route
               path="*"
-              element={<div style={{ color: '#fff' }}>Bitte wähle eine Seite aus dem Menü</div>}
+              element={<div style={{ color: '#fff' }}>No menu loaded</div>}
             />
           </Routes>
         </Suspense>
