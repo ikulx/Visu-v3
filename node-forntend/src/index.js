@@ -10,7 +10,8 @@ import './i18n';
 
 const darkTheme = {
   token: {
-    colorPrimary: '#ffb000',       // Primäre Farbe
+    colorPrimary: '#ffb000', 
+    controlItemBgActive: '#383838',        // Primäre Farbe
     colorBgBase: '#000',           // Basis-Hintergrundfarbe
     colorTextBase: '#fff',         // Basis-Textfarbe
     colorBorder: '#434343',        // Rahmenfarbe
@@ -18,6 +19,7 @@ const darkTheme = {
     colorTextSecondary: '#d9d9d9', // Sekundäre Textfarbe
     fontSize: 14,                  // Basis-Schriftgröße
     borderRadius: 4,               // Abgerundete Ecken
+    itemSelectedBg: '#383838', 
   },
   components: {
     Menu: {
@@ -39,6 +41,9 @@ const darkTheme = {
       footerBg: '#383838',         // Footer-Hintergrund
       bodyBg: '#000',              // Body-Hintergrund
     },
+    Tree: {
+      nodeSelectedBg: '#383838',
+    }        
   },
 };
 

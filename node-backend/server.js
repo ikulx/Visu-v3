@@ -5,6 +5,7 @@ const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
 const db = require('./db');
 const dbRoutes = require('./dbRoutes');
+const { router: menuRoutes, initializeMenuSocket, getCurrentMenu, loadMenuFromDb } = require('./menuRoutes'); // Import korrigiert
 
 const app = express();
 const server = http.createServer(app);
@@ -19,165 +20,8 @@ global.io = io;
 
 app.use(bodyParser.json());
 
-// Funktion zum Laden des Menüs aus der Datenbank
-async function loadMenuFromDb() {
-  return new Promise((resolve, reject) => {
-    db.all(`
-      SELECT id, link, label, svg, parent_id
-      FROM menu_items
-    `, [], (err, rows) => {
-      if (err) {
-        console.error('Fehler beim Laden des Menüs aus der Datenbank:', err.message);
-        return reject(err);
-      }
-
-      const buildMenuTree = (items, parentId = null) => {
-        return items
-          .filter(item => item.parent_id === parentId)
-          .map(item => ({
-            id: item.id,
-            link: item.link,
-            label: item.label,
-            svg: item.svg,
-            properties: currentMenu.menuItems.find(m => m.link === item.link)?.properties || {}, // Properties aus Speicher übernehmen
-            sub: buildMenuTree(items, item.id),
-          }));
-      };
-
-      const menuItems = buildMenuTree(rows);
-      resolve({ menuItems });
-    });
-  });
-}
-
-// Initiales Laden des Menüs
-let currentMenu = { menuItems: [] };
+// Initiales Footer-Objekt
 let currentFooter = { temperature: '–' };
-
-(async () => {
-  try {
-    currentMenu = await loadMenuFromDb();
-    console.log('Menü aus der Datenbank geladen.');
-  } catch (err) {
-    console.warn('Fehler beim initialen Laden des Menüs, verwende leeres Menü.');
-    currentMenu = { menuItems: [] };
-  }
-})();
-
-// Endpunkt zum Aktualisieren des gesamten Menüs
-app.post('/update-menu', async (req, res) => {
-  const newMenu = req.body;
-
-  if (!newMenu.menuItems || !Array.isArray(newMenu.menuItems)) {
-    return res.status(400).send('Ungültiges Menüformat: menuItems muss ein Array sein');
-  }
-
-  // Validierung: Sicherstellen, dass jedes Element ein label hat
-  const validateMenuItems = (items) => {
-    for (const item of items) {
-      if (!item.label || typeof item.label !== 'string') {
-        item.label = 'Unnamed'; // Standardwert setzen
-      }
-      if (item.sub && Array.isArray(item.sub)) {
-        validateMenuItems(item.sub);
-      }
-    }
-  };
-  validateMenuItems(newMenu.menuItems);
-
-  try {
-    // Lösche vorhandene Menüeinträge
-    await new Promise((resolve, reject) => {
-      db.run('DELETE FROM menu_items', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    // Rekursive Funktion zum Einfügen von Menüeinträgen (ohne properties)
-    const insertMenuItems = async (items, parentId = null) => {
-      for (const item of items) {
-        const id = await new Promise((resolve, reject) => {
-          db.run(`
-            INSERT INTO menu_items (link, label, svg, parent_id)
-            VALUES (?, ?, ?, ?)
-          `, [item.link, item.label, item.svg, parentId], function (err) {
-            if (err) reject(err);
-            else resolve(this.lastID);
-          });
-        });
-        if (item.sub && Array.isArray(item.sub)) {
-          await insertMenuItems(item.sub, id);
-        }
-      }
-    };
-
-    await insertMenuItems(newMenu.menuItems);
-
-    // Properties aus dem Request in currentMenu übernehmen
-    const updatePropertiesInMemory = (sourceItems, targetItems) => {
-      for (const source of sourceItems) {
-        const target = targetItems.find(t => t.link === source.link);
-        if (target) {
-          target.properties = source.properties || {};
-        }
-        if (source.sub && target.sub) {
-          updatePropertiesInMemory(source.sub, target.sub);
-        }
-      }
-    };
-    currentMenu = await loadMenuFromDb();
-    updatePropertiesInMemory(newMenu.menuItems, currentMenu.menuItems);
-
-    io.emit('menu-update', currentMenu);
-    res.sendStatus(200);
-  } catch (err) {
-    console.error('Fehler beim Aktualisieren des Menüs:', err.message);
-    res.status(500).send(`Fehler beim Aktualisieren des Menüs: ${err.message}`);
-  }
-});
-
-// Endpunkt zum Aktualisieren einzelner Menü-Properties (nur im Speicher)
-app.post('/update-properties', async (req, res) => {
-  const { link, properties } = req.body;
-
-  if (!link || !properties) {
-    return res.status(400).send('Link und Properties erforderlich');
-  }
-
-  // Properties im Speicher aktualisieren
-  const updateItemProperties = (items) => {
-    for (const item of items) {
-      if (item.link === link) {
-        item.properties = properties;
-        return true;
-      }
-      if (item.sub && Array.isArray(item.sub)) {
-        if (updateItemProperties(item.sub)) return true;
-      }
-    }
-    return false;
-  };
-
-  const updated = updateItemProperties(currentMenu.menuItems);
-  if (!updated) {
-    return res.status(404).send('Menüeintrag nicht gefunden');
-  }
-
-  io.emit('menu-update', currentMenu);
-  res.sendStatus(200);
-});
-
-// Endpunkt zum Setzen der Footer-Daten
-app.post('/setFooter', (req, res) => {
-  const footerUpdate = req.body;
-  currentFooter = {
-    ...currentFooter,
-    ...footerUpdate,
-  };
-  io.emit('footer-update', currentFooter);
-  res.sendStatus(200);
-});
 
 // Funktion zum Senden eines Node-RED-Updates
 async function sendNodeRedUpdate(name, var_value) {
@@ -274,8 +118,6 @@ function broadcastSettings(socket = null, user = null) {
 
 // Socket.IO-Verbindungen
 io.on('connection', (socket) => {
-  console.log('Neuer Client verbunden:', socket.id);
-  socket.emit('menu-update', currentMenu);
   socket.emit('footer-update', currentFooter);
   broadcastSettings(socket);
 
@@ -292,7 +134,7 @@ io.on('connection', (socket) => {
     broadcastSettings(socket, user);
   });
 
-  socket.on('update-variable', (payload) => {
+  socket.on('update-variable', async (payload) => {
     if (!payload.key || !payload.search || !payload.target) {
       socket.emit('update-error', { message: 'Ungültiger Payload' });
       return;
@@ -309,7 +151,7 @@ io.on('connection', (socket) => {
     }
 
     const sql = `UPDATE QHMI_VARIABLES SET ${payload.target} = ? WHERE ${payload.key} = ?`;
-    db.run(sql, [payload.value, payload.search], function (err) {
+    db.run(sql, [payload.value, payload.search], async function (err) {
       if (err) {
         console.error('Fehler beim Aktualisieren der Datenbank:', err);
         socket.emit('update-error', { message: 'Fehler beim Aktualisieren der Datenbank.' });
@@ -322,6 +164,11 @@ io.on('connection', (socket) => {
 
       sendFullDbUpdate();
       broadcastSettings();
+
+      // Menü aktualisieren
+      const updatedMenu = await loadMenuFromDb(); // Jetzt korrekt verfügbar
+      io.emit('menu-update', updatedMenu);
+
       socket.emit('update-success', { changes: this.changes });
     });
   });
@@ -331,8 +178,25 @@ io.on('connection', (socket) => {
   });
 });
 
+// Menü-Socket-Initialisierung
+initializeMenuSocket(io);
+
+// Endpunkt zum Setzen der Footer-Daten
+app.post('/setFooter', (req, res) => {
+  const footerUpdate = req.body;
+  currentFooter = {
+    ...currentFooter,
+    ...footerUpdate,
+  };
+  io.emit('footer-update', currentFooter);
+  res.sendStatus(200);
+});
+
 // Verwende die SQLite-Endpunkte aus dbRoutes.js
 app.use('/db', dbRoutes);
+
+// Verwende die Menü-Endpunkte aus menuRoutes.js
+app.use('/menu', menuRoutes);
 
 const PORT = 3001;
 server.listen(PORT, () => {

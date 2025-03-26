@@ -11,7 +11,6 @@ const db = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
-// Tabelle für Menü erstellen (ohne properties)
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS menu_items (
@@ -20,6 +19,9 @@ db.serialize(() => {
       label TEXT NOT NULL,
       svg TEXT,
       parent_id INTEGER,
+      properties TEXT,
+      labelSource TEXT DEFAULT 'static', -- Neues Feld: 'static' oder 'db'
+      dbName TEXT, -- Neues Feld: NAME aus QHMI_VARIABLES, wenn labelSource = 'db'
       FOREIGN KEY (parent_id) REFERENCES menu_items(id)
     )
   `, (err) => {
@@ -30,15 +32,14 @@ db.serialize(() => {
     }
   });
 
-  // Standard-Menüeintrag einfügen, falls die Tabelle leer ist
   db.get('SELECT COUNT(*) as count FROM menu_items', (err, row) => {
     if (err) {
       console.error('Fehler beim Prüfen der menu_items-Tabelle:', err.message);
     } else if (row.count === 0) {
       db.run(`
-        INSERT INTO menu_items (link, label, svg)
-        VALUES (?, ?, ?)
-      `, ['/', 'Home', 'home'], (err) => {
+        INSERT INTO menu_items (link, label, svg, properties, labelSource)
+        VALUES (?, ?, ?, ?, ?)
+      `, ['/', 'Home', 'home', JSON.stringify({}), 'static'], (err) => {
         if (err) {
           console.error('Fehler beim Einfügen des Standard-Menüs:', err.message);
         } else {

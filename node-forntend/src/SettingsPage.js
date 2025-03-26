@@ -53,7 +53,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
 
   // Nur sichtbare Settings filtern
   const visibleSettings = useMemo(() => {
-    return settingsData.filter(row => row.visible == 1 || row.visible === '1');
+    return settingsData.filter(row => row.visible === 1 || row.visible === '1');
   }, [settingsData]);
 
   // Gruppierung nach tag_top und tag_sub

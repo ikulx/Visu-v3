@@ -2,12 +2,11 @@
 const express = require('express');
 const path = require('path');
 const router = express.Router();
-const db = require('./db'); // Import der Singleton-Datenbankverbindung
+const db = require('./db');
+const { loadMenuFromDb } = require('./menuRoutes'); // Import für Menü-Logik
 
-// Node-RED-Endpoint
 const nodeRedUrl = 'http://192.168.10.31:1880/db/Changes';
 
-// Erlaubte Spaltennamen (Whitelist)
 const allowedColumns = [
   'id', 'NAME', 'VAR_VALUE', 'unit', 'TYPE', 'OPTI', 'adresse', 'faktor',
   'MIN', 'MAX', 'EDITOR', 'sort', 'visible', 'HKL', 'HKL_Feld',
@@ -84,6 +83,12 @@ function broadcastSettings() {
   });
 }
 
+async function checkAndUpdateMenu() {
+  // Lade das aktuelle Menü neu, um dynamische Labels zu aktualisieren
+  const updatedMenu = await loadMenuFromDb();
+  global.io.emit('menu-update', updatedMenu);
+}
+
 router.post('/update-variable', (req, res) => {
   const { key, search, target, value } = req.body;
 
@@ -93,7 +98,7 @@ router.post('/update-variable', (req, res) => {
 
   const sql = `UPDATE QHMI_VARIABLES SET ${target} = ? WHERE ${key} = ?`;
 
-  db.run(sql, [value, search], function (err) {
+  db.run(sql, [value, search], async function (err) {
     if (err) {
       console.error('Fehler beim Aktualisieren der Datenbank:', err);
       return res.status(500).json({ error: 'Fehler beim Aktualisieren der Datenbank.' });
@@ -105,6 +110,9 @@ router.post('/update-variable', (req, res) => {
 
     sendFullDbUpdate();
     broadcastSettings();
+
+    // Prüfe, ob Menüeinträge betroffen sind, und aktualisiere das Menü
+    await checkAndUpdateMenu();
 
     res.json({ message: 'Datenbank erfolgreich aktualisiert.', changes: this.changes });
   });
@@ -137,7 +145,7 @@ router.post('/update-batch', (req, res) => {
       checkFinish();
       return;
     }
-    db.run(updateObj.sql, updateObj.params, function (err) {
+    db.run(updateObj.sql, updateObj.params, async function (err) {
       if (err) {
         errors.push({ index, error: err.message });
       }
@@ -145,10 +153,11 @@ router.post('/update-batch', (req, res) => {
     });
   });
 
-  function checkFinish() {
+  async function checkFinish() {
     executed++;
     if (executed === total) {
       broadcastSettings();
+      await checkAndUpdateMenu(); // Menü aktualisieren
       if (errors.length > 0) {
         res.status(500).json({ message: 'Einige Updates konnten nicht ausgeführt werden.', errors });
       } else {
