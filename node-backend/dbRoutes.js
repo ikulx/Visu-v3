@@ -97,7 +97,6 @@ router.post('/update-variable', (req, res) => {
   }
 
   const sql = `UPDATE QHMI_VARIABLES SET ${target} = ? WHERE ${key} = ?`;
-
   db.run(sql, [value, search], async function (err) {
     if (err) {
       console.error('Fehler beim Aktualisieren der Datenbank:', err);
@@ -111,8 +110,22 @@ router.post('/update-variable', (req, res) => {
     sendFullDbUpdate();
     broadcastSettings();
 
-    // Prüfe, ob Menüeinträge betroffen sind, und aktualisiere das Menü
-    await checkAndUpdateMenu();
+    // Prüfe, ob die Variable im Menü verwendet wird
+    const isMenuRelevant = await new Promise((resolve) => {
+      db.get(
+        `SELECT COUNT(*) as count 
+         FROM menu_items mi 
+         LEFT JOIN menu_properties mp ON mi.id = mp.menu_id 
+         WHERE mi.qhmi_variable_id = (SELECT id FROM QHMI_VARIABLES WHERE ${key} = ?) 
+            OR mp.qhmi_variable_id = (SELECT id FROM QHMI_VARIABLES WHERE ${key} = ?)`,
+        [search, search],
+        (err, row) => resolve(err ? false : row.count > 0)
+      );
+    });
+
+    if (isMenuRelevant) {
+      await checkAndUpdateMenu();
+    }
 
     res.json({ message: 'Datenbank erfolgreich aktualisiert.', changes: this.changes });
   });

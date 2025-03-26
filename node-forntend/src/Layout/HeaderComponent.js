@@ -89,7 +89,7 @@ const HeaderComponent = ({ menuItems: initialMenuItems = [] }) => {
       }
     } else {
       if (!item.link) {
-        console.warn('Menüpunkt ohne link:', item);
+        // console.warn('Menüpunkt ohne link:', item);
         return {
           // key: uniqueKey,
           // label: <span className="header-menu-item">{displayLabel}</span>,
@@ -118,7 +118,7 @@ const HeaderComponent = ({ menuItems: initialMenuItems = [] }) => {
       console.log('Navigating to:', clickedItem.link);
       navigate(clickedItem.link);
     } else {
-      console.warn('No valid link for menu item with key:', key);
+      // console.warn('No valid link for menu item with key:', key);
     }
     if (!screens.md) {
       setDrawerVisible(false);

@@ -159,7 +159,7 @@ function App() {
             alignItems: 'center',
             fontSize: '24px',
             textAlign: 'center',
-            padding: '20px'
+            padding: '0px'
           }
         }}
       >

@@ -5,7 +5,7 @@ const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
 const db = require('./db');
 const dbRoutes = require('./dbRoutes');
-const { router: menuRoutes, initializeMenuSocket, getCurrentMenu, loadMenuFromDb } = require('./menuRoutes'); // Import korrigiert
+const { router: menuRoutes, initializeMenuSocket, getCurrentMenu, loadMenuFromDb } = require('./menuRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -150,7 +150,9 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Definieren der SQL-Abfrage
     const sql = `UPDATE QHMI_VARIABLES SET ${payload.target} = ? WHERE ${payload.key} = ?`;
+
     db.run(sql, [payload.value, payload.search], async function (err) {
       if (err) {
         console.error('Fehler beim Aktualisieren der Datenbank:', err);
@@ -165,9 +167,23 @@ io.on('connection', (socket) => {
       sendFullDbUpdate();
       broadcastSettings();
 
-      // Menü aktualisieren
-      const updatedMenu = await loadMenuFromDb(); // Jetzt korrekt verfügbar
-      io.emit('menu-update', updatedMenu);
+      // Prüfe, ob die Variable im Menü verwendet wird
+      const isMenuRelevant = await new Promise((resolve) => {
+        db.get(
+          `SELECT COUNT(*) as count 
+           FROM menu_items mi 
+           LEFT JOIN menu_properties mp ON mi.id = mp.menu_id 
+           WHERE mi.qhmi_variable_id = (SELECT id FROM QHMI_VARIABLES WHERE ${payload.key} = ?) 
+              OR mp.qhmi_variable_id = (SELECT id FROM QHMI_VARIABLES WHERE ${payload.key} = ?)`,
+          [payload.search, payload.search],
+          (err, row) => resolve(err ? false : row.count > 0)
+        );
+      });
+
+      if (isMenuRelevant) {
+        const updatedMenu = await loadMenuFromDb();
+        io.emit('menu-update', updatedMenu);
+      }
 
       socket.emit('update-success', { changes: this.changes });
     });
