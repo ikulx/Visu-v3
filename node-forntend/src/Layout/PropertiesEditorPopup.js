@@ -1,4 +1,3 @@
-// src/Layout/PropertiesEditorPopup.js
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Input, Space, Radio, Typography, Select } from 'antd';
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
@@ -10,12 +9,12 @@ const PropertiesEditorPopup = ({ visible, onClose, properties, qhmiVariables, on
   const [localProperties, setLocalProperties] = useState([]);
 
   useEffect(() => {
-    const initialProperties = Object.entries(properties).map(([key, value], index) => ({
+    const initialProperties = Object.entries(properties).map(([key, prop], index) => ({
       id: `prop-${index}-${Date.now()}`,
       key,
-      value: value.includes('.') ? null : value,
-      qhmi_variable_id: value.includes('.') ? qhmiVariables.find(v => v.NAME === value.split('.')[0])?.id : null,
-      source: value.includes('.') ? 'dynamic' : 'static',
+      value: prop.source === 'static' ? prop.currentValue : null,
+      qhmi_variable_id: prop.source === 'dynamic' ? prop.qhmi_variable_id : null,
+      source: prop.source
     }));
     setLocalProperties(initialProperties);
   }, [properties, qhmiVariables]);

@@ -1,11 +1,10 @@
-// src/server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
 const db = require('./db');
 const dbRoutes = require('./dbRoutes');
-const { router: menuRoutes, initializeMenuSocket, getCurrentMenu, loadMenuFromDb } = require('./menuRoutes');
+const { router: menuRoutes, loadMenuWithProperties, updateMenu } = require('./menuRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,19 +15,15 @@ const io = socketIo(server, {
     methods: ['GET', 'POST'],
   },
 });
-global.io = io;
 
 app.use(bodyParser.json());
 
-// Initiales Footer-Objekt
 let currentFooter = { temperature: '–' };
 
-// Funktion zum Senden eines Node-RED-Updates
 async function sendNodeRedUpdate(name, var_value) {
   try {
     const { default: fetch } = await import('node-fetch');
-    const payload = {};
-    payload[name] = var_value;
+    const payload = { [name]: var_value };
     const response = await fetch('http://192.168.10.31:1880/db/Changes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -41,7 +36,6 @@ async function sendNodeRedUpdate(name, var_value) {
   }
 }
 
-// Funktion zum Senden der kompletten DB an Node-RED
 async function sendFullDbUpdate() {
   db.all('SELECT * FROM QHMI_VARIABLES', [], async (err, rows) => {
     if (err) {
@@ -63,63 +57,43 @@ async function sendFullDbUpdate() {
   });
 }
 
-// Funktion zum Broadcasten der Settings über Socket.IO
 function broadcastSettings(socket = null, user = null) {
-  const sql = `SELECT 
-                 NAME, 
-                 NAME_de, 
-                 NAME_fr, 
-                 NAME_en, 
-                 NAME_it, 
-                 VAR_VALUE, 
-                 benutzer, 
-                 visible, 
-                 tag_top, 
-                 tag_sub,
-                 TYPE,
-                 OPTI_de,
-                 OPTI_fr,
-                 OPTI_en,
-                 OPTI_it,
-                 MIN,
-                 MAX,
-                 unit
-               FROM QHMI_VARIABLES`;
+  const sql = `SELECT NAME, NAME_de, NAME_fr, NAME_en, NAME_it, VAR_VALUE, benutzer, visible, tag_top, tag_sub, TYPE, OPTI_de, OPTI_fr, OPTI_en, OPTI_it, MIN, MAX, unit FROM QHMI_VARIABLES`;
   db.all(sql, [], (err, rows) => {
     if (err) {
       console.error('Fehler beim Abrufen der Settings:', err);
       return;
     }
     if (user) {
-      rows = rows.filter((row) => {
-        if (!row.benutzer) return false;
-        const allowedUsers = row.benutzer.split(',').map((u) => u.trim().toLowerCase());
-        return allowedUsers.includes(user.toLowerCase());
-      });
+      rows = rows.filter(row => row.benutzer?.split(',').map(u => u.trim().toLowerCase()).includes(user.toLowerCase()));
     }
+    const eventData = { type: 'settings', data: rows };
     if (socket) {
-      socket.emit('settings-update', rows);
+      socket.emit('data-update', eventData);
     } else {
-      for (const [id, s] of io.sockets.sockets) {
-        const usr = s.loggedInUser;
-        let filtered = rows;
-        if (usr) {
-          filtered = rows.filter((row) => {
-            if (!row.benutzer) return false;
-            const allowedUsers = row.benutzer.split(',').map((u) => u.trim().toLowerCase());
-            return allowedUsers.includes(usr.toLowerCase());
-          });
-        }
-        s.emit('settings-update', filtered);
-      }
+      io.emit('data-update', eventData);
     }
   });
 }
 
-// Socket.IO-Verbindungen
 io.on('connection', (socket) => {
-  socket.emit('footer-update', currentFooter);
+  socket.emit('data-update', { type: 'footer', data: currentFooter });
   broadcastSettings(socket);
+
+  socket.on('request-data', async (type) => {
+    if (type === 'menu') {
+      const menuData = await loadMenuWithProperties();
+      socket.emit('data-update', { type: 'menu', data: menuData });
+    } else if (type === 'qhmi-variables') {
+      db.all('SELECT id, NAME FROM QHMI_VARIABLES', [], (err, rows) => {
+        if (err) {
+          socket.emit('data-update', { type: 'qhmi-variables-error', data: { message: 'Fehler beim Laden der Variablen' } });
+        } else {
+          socket.emit('data-update', { type: 'qhmi-variables', data: rows });
+        }
+      });
+    }
+  });
 
   socket.on('set-user', (data) => {
     socket.loggedInUser = data.user;
@@ -128,7 +102,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('request-settings', (data) => {
-    const user = data && data.user ? data.user : null;
+    const user = data?.user || null;
     socket.loggedInUser = user;
     console.log(`Socket ${socket.id} fordert Settings für Benutzer: ${user}`);
     broadcastSettings(socket, user);
@@ -136,7 +110,7 @@ io.on('connection', (socket) => {
 
   socket.on('update-variable', async (payload) => {
     if (!payload.key || !payload.search || !payload.target) {
-      socket.emit('update-error', { message: 'Ungültiger Payload' });
+      socket.emit('data-update', { type: 'update-error', data: { message: 'Ungültiger Payload' } });
       return;
     }
 
@@ -146,17 +120,15 @@ io.on('connection', (socket) => {
       'NAME_de', 'NAME_fr', 'NAME_en', 'NAME_it',
     ];
     if (!allowedColumns.includes(payload.target) || !allowedColumns.includes(payload.key)) {
-      socket.emit('update-error', { message: 'Ungültige Spaltenangabe.' });
+      socket.emit('data-update', { type: 'update-error', data: { message: 'Ungültige Spaltenangabe.' } });
       return;
     }
 
-    // Definieren der SQL-Abfrage
     const sql = `UPDATE QHMI_VARIABLES SET ${payload.target} = ? WHERE ${payload.key} = ?`;
-
     db.run(sql, [payload.value, payload.search], async function (err) {
       if (err) {
         console.error('Fehler beim Aktualisieren der Datenbank:', err);
-        socket.emit('update-error', { message: 'Fehler beim Aktualisieren der Datenbank.' });
+        socket.emit('data-update', { type: 'update-error', data: { message: 'Fehler beim Aktualisieren der Datenbank.' } });
         return;
       }
 
@@ -167,7 +139,6 @@ io.on('connection', (socket) => {
       sendFullDbUpdate();
       broadcastSettings();
 
-      // Prüfe, ob die Variable im Menü verwendet wird
       const isMenuRelevant = await new Promise((resolve) => {
         db.get(
           `SELECT COUNT(*) as count 
@@ -181,12 +152,23 @@ io.on('connection', (socket) => {
       });
 
       if (isMenuRelevant) {
-        const updatedMenu = await loadMenuFromDb();
-        io.emit('menu-update', updatedMenu);
+        const updatedMenu = await loadMenuWithProperties();
+        io.emit('data-update', { type: 'menu', data: updatedMenu });
       }
 
-      socket.emit('update-success', { changes: this.changes });
+      socket.emit('data-update', { type: 'update-success', data: { changes: this.changes } });
     });
+  });
+
+  socket.on('update-menu', async (newMenu) => {
+    try {
+      await updateMenu(newMenu);
+      const updatedMenu = await loadMenuWithProperties();
+      socket.emit('data-update', { type: 'menu-update-success', data: updatedMenu });
+    } catch (err) {
+      console.error('Fehler beim Menü-Update:', err.message);
+      socket.emit('data-update', { type: 'menu-update-error', data: { message: 'Fehler beim Aktualisieren des Menüs' } });
+    }
   });
 
   socket.on('disconnect', () => {
@@ -194,24 +176,14 @@ io.on('connection', (socket) => {
   });
 });
 
-// Menü-Socket-Initialisierung
-initializeMenuSocket(io);
-
-// Endpunkt zum Setzen der Footer-Daten
 app.post('/setFooter', (req, res) => {
   const footerUpdate = req.body;
-  currentFooter = {
-    ...currentFooter,
-    ...footerUpdate,
-  };
-  io.emit('footer-update', currentFooter);
+  currentFooter = { ...currentFooter, ...footerUpdate };
+  io.emit('data-update', { type: 'footer', data: currentFooter });
   res.sendStatus(200);
 });
 
-// Verwende die SQLite-Endpunkte aus dbRoutes.js
 app.use('/db', dbRoutes);
-
-// Verwende die Menü-Endpunkte aus menuRoutes.js
 app.use('/menu', menuRoutes);
 
 const PORT = 3001;

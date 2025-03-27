@@ -1,31 +1,17 @@
-// src/Page.js
 import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
-// Globaler Cache für SVGs: speichert entweder den Promise oder den fertigen SVG-Text
 const svgCache = {};
 
-// Helper-Funktion: Liefert den SVG-Text oder den laufenden Promise, falls bereits ein Fetch läuft.
 const fetchSvg = (svgFile) => {
-  // Falls schon etwas im Cache ist:
-  if (svgCache[svgFile]) {
-    // Falls es sich um einen Promise handelt, diesen zurückgeben
-    if (typeof svgCache[svgFile].then === 'function') {
-      return svgCache[svgFile];
-    }
-    // Andernfalls gibt es den fertigen Text zurück
-    return Promise.resolve(svgCache[svgFile]);
-  }
-  // Andernfalls: Starte den Fetch und speichere den Promise im Cache
+  if (svgCache[svgFile]) return svgCache[svgFile] instanceof Promise ? svgCache[svgFile] : Promise.resolve(svgCache[svgFile]);
   const promise = fetch(svgFile)
     .then(response => {
-      if (!response.ok) {
-        throw new Error(`SVG ${svgFile} nicht gefunden.`);
-      }
+      if (!response.ok) throw new Error(`SVG ${svgFile} nicht gefunden.`);
       return response.text();
     })
     .then(text => {
-      svgCache[svgFile] = text; // Text im Cache speichern
+      svgCache[svgFile] = text;
       console.log(`Loaded: ${svgFile}`);
       return text;
     })
@@ -33,7 +19,7 @@ const fetchSvg = (svgFile) => {
       console.error('Fehler beim Laden des SVG:', err);
       throw err;
     });
-  svgCache[svgFile] = promise; // Speichere zunächst den Promise
+  svgCache[svgFile] = promise;
   return promise;
 };
 
@@ -43,41 +29,26 @@ const Page = ({ svg: currentSvg, properties, allSvgs = [] }) => {
   const [svgContent, setSvgContent] = useState('');
   const containerRef = useRef(null);
 
-  // Preload aller definierten SVGs (läuft beim Mounten der Seite)
   useEffect(() => {
-    allSvgs.forEach(svgName => {
-      const svgFile = `/assets/${svgName}.svg`;
-      // Starte fetchSvg, falls noch nicht im Cache
-      fetchSvg(svgFile).catch(() => {
-        // Fehler bereits geloggt
-      });
-    });
+    allSvgs.forEach(svgName => fetchSvg(`/assets/${svgName}.svg`).catch(() => {}));
   }, [allSvgs]);
 
-  // Lade das aktuell benötigte SVG (nutzt den Cache und den Promise)
   useEffect(() => {
-    fetchSvg(currentSvgFile)
-      .then(text => setSvgContent(text))
-      .catch(() => {
-        // Fehler bereits geloggt
-      });
+    fetchSvg(currentSvgFile).then(text => setSvgContent(text)).catch(() => {});
   }, [currentSvgFile]);
 
-  // Verarbeite den geladenen SVG-Inhalt: Ersetze Platzhalter und passe Attribute an
   useEffect(() => {
     if (svgContent && containerRef.current) {
       let processedSvg = svgContent.replace(/{{(.*?)}}/g, (match, p1) => t(p1.trim()));
-
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(processedSvg, 'image/svg+xml');
 
-      // Falls vorhanden: Verarbeite ycontrol-Einträge
       const ycontrol = xmlDoc.querySelector('ycontrol');
       if (ycontrol) {
         const propertyElements = ycontrol.querySelectorAll('property');
         propertyElements.forEach(propEl => {
           const propName = propEl.getAttribute('name');
-          const value = properties?.[propName]?.toString() ?? propEl.getAttribute('defaultvalue');
+          const value = properties?.[propName]?.currentValue ?? propEl.getAttribute('defaultvalue');
           const targets = propEl.querySelectorAll('target');
           targets.forEach(target => {
             const targetType = target.getAttribute('type');
@@ -122,12 +93,9 @@ const Page = ({ svg: currentSvg, properties, allSvgs = [] }) => {
         });
       }
 
-      // Sicherstellen, dass das SVG den gesamten Container ausfüllt
       const svgEl = xmlDoc.querySelector('svg');
       if (svgEl) {
-        if (!svgEl.getAttribute('viewBox')) {
-          svgEl.setAttribute('viewBox', '0 0 1024 423');
-        }
+        if (!svgEl.getAttribute('viewBox')) svgEl.setAttribute('viewBox', '0 0 1024 423');
         svgEl.removeAttribute('width');
         svgEl.removeAttribute('height');
         svgEl.setAttribute('width', '100%');

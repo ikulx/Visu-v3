@@ -1,4 +1,3 @@
-// src/App.js
 import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Spin, Modal } from 'antd';
@@ -7,195 +6,120 @@ import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
 
-// Lazy-Load der Seiten
 const LazyPage = React.lazy(() => import('./Page'));
 const LazySettingsPage = React.lazy(() => import('./SettingsPage'));
 
-// Hilfsfunktion zum flachen Auslesen der Menüeinträge
 const flattenMenuItems = (items) => {
   let flat = [];
   items.forEach(item => {
-    if (item.link) {
-      flat.push(item);
-    }
-    if (item.sub && Array.isArray(item.sub)) {
-      flat = flat.concat(flattenMenuItems(item.sub));
-    }
+    if (item.link) flat.push(item);
+    if (item.sub && Array.isArray(item.sub)) flat = flat.concat(flattenMenuItems(item.sub));
   });
   return flat;
 };
 
 function App() {
   const { t } = useTranslation();
-  const [menuData, setMenuData] = useState({ menuItems: [] });
-  const [isConnected, setIsConnected] = useState(socket.connected);
-  const [connectionError, setConnectionError] = useState(null);
-  const [menuError, setMenuError] = useState(null);
+  const [state, setState] = useState({
+    menu: { menuItems: [] },
+    qhmiVariables: [],
+    footer: { temperature: '–' },
+    connectionError: null,
+    menuError: null,
+  });
 
   useEffect(() => {
-    // Socket-Listener für Menü-Updates
-    socket.on('menu-update', (data) => {
-      console.log('Menu update received:', data);
-      setMenuData(data);
-      setMenuError(null); // Fehler zurücksetzen bei erfolgreichem Update
+    socket.on('data-update', ({ type, data }) => {
+      console.log(`[DEBUG] Eingehendes Event: ${type}`, data);
+      if (type === 'menu-update-success') {
+        setState(prev => ({ ...prev, menu: data }));
+      } else if (type === 'menu-update-error') {
+        setState(prev => ({ ...prev, menuError: data.message }));
+      } else {
+        setState(prev => ({ ...prev, [type]: data }));
+      }
     });
 
-    socket.on('menu-error', (data) => {
-      console.error('Menu error received:', data.message);
-      setMenuError(data.message);
-    });
-
-    // Listener für Verbindungsstatus mit Debugging
     const onConnect = () => {
-      console.log('Socket connected');
-      setIsConnected(true);
-      setConnectionError(null);
+      setState(prev => ({ ...prev, connectionError: null }));
+      socket.emit('request-data', 'menu');
+      socket.emit('request-data', 'qhmi-variables');
     };
 
-    const onDisconnect = () => {
-      console.log('Socket disconnected');
-      setIsConnected(false);
-      setConnectionError(t('connectionLost'));
-    };
-
-    const onConnectError = (error) => {
-      console.log('Socket connect error:', error.message);
-      setIsConnected(false);
-      setConnectionError(t('connectionError', { message: error.message || 'Unknown error' }));
-    };
-
-    const onReconnectError = (error) => {
-      console.log('Socket reconnect error:', error.message);
-      setIsConnected(false);
-      setConnectionError(t('reconnectError', { message: error.message || 'Unknown error' }));
-    };
+    const onDisconnect = () => setState(prev => ({ ...prev, connectionError: t('connectionLost') }));
+    const onConnectError = (error) => setState(prev => ({ ...prev, connectionError: t('connectionError', { message: error.message || 'Unknown error' }) }));
+    const onReconnectError = (error) => setState(prev => ({ ...prev, connectionError: t('reconnectError', { message: error.message || 'Unknown error' }) }));
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
     socket.on('reconnect_error', onReconnectError);
 
-    // Initialer Status prüfen
-    console.log('Initial socket status:', socket.connected);
-    if (!socket.connected) {
-      setConnectionError(t('initialConnectionError'));
-    }
+    if (!socket.connected) setState(prev => ({ ...prev, connectionError: t('initialConnectionError') }));
 
-    // Cleanup bei Unmount
     return () => {
-      socket.off('menu-update');
-      socket.off('menu-error');
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('connect_error', onConnectError);
-      socket.off('reconnect_error', onReconnectError);
+      socket.off('data-update');
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+      socket.off('reconnect_error');
     };
   }, [t]);
 
-  const flatMenuItems = flattenMenuItems(menuData.menuItems);
+  const visibleMenuItems = useMemo(() => {
+    const filterVisible = (items) => items
+      .filter(item => !(item.labelSource === 'dynamic' && item.qhmi_variable_id && item.visible === 0))
+      .map(item => ({ ...item, sub: filterVisible(item.sub || []) }));
+    return filterVisible(state.menu.menuItems);
+  }, [state.menu]);
 
-  const allSvgs = useMemo(() => {
-    const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
-    return Array.from(new Set(svgNames));
-  }, [flatMenuItems]);
+  const flatMenuItems = flattenMenuItems(visibleMenuItems);
+  const allSvgs = useMemo(() => Array.from(new Set(flatMenuItems.map(item => item.svg).filter(Boolean))), [flatMenuItems]);
 
   return (
     <Router>
-      <MainLayout menuItems={menuData.menuItems}>
-        <Suspense
-          fallback={
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                height: '100%',
-                color: '#fff'
-              }}
-            >
-              <Spin size="large" tip="Lädt..." />
-            </div>
-          }
-        >
+      <MainLayout menuItems={visibleMenuItems}>
+        <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}><Spin size="large" tip="Lädt..." /></div>}>
           <Routes>
             {flatMenuItems.map(item => (
-              <Route
-                key={item.link}
-                path={item.link}
-                element={
-                  <LazyPage
-                    svg={item.svg}
-                    properties={item.properties}
-                    allSvgs={allSvgs}
-                  />
-                }
-              />
+              <Route key={item.link} path={item.link} element={<LazyPage svg={item.svg} properties={item.properties} allSvgs={allSvgs} />} />
             ))}
             <Route path="/settings" element={<LazySettingsPage />} />
-            <Route
-              path="*"
-              element={<div style={{ color: '#fff' }}>No menu loaded</div>}
-            />
+            <Route path="*" element={<div style={{ color: '#fff' }}>No menu loaded</div>} />
           </Routes>
         </Suspense>
       </MainLayout>
 
-      {/* Vollbild-Benachrichtigung für Verbindungsfehler */}
       <Modal
-        visible={!!connectionError}
+        visible={!!state.connectionError}
         footer={null}
         closable={false}
         maskClosable={false}
         width="100%"
         centered
         style={{ top: 0, padding: 0 }}
-        styles={{
-          body: {
-            height: '100%',
-            backgroundColor: 'rgba(255, 0, 0, 0.9)',
-            color: '#fff',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            fontSize: '24px',
-            textAlign: 'center',
-            padding: '0px'
-          }
-        }}
+        styles={{ body: { height: '100%', backgroundColor: 'rgba(255, 0, 0, 0.9)', color: '#fff', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px', textAlign: 'center', padding: '0px' } }}
       >
         <div>
           <h2>{t('connectionLostTitle')}</h2>
-          <p>{connectionError}</p>
+          <p>{state.connectionError}</p>
           <p>{t('reconnecting')}</p>
         </div>
       </Modal>
 
-      {/* Vollbild-Benachrichtigung für Menü-Fehler */}
       <Modal
-        visible={!!menuError}
+        visible={!!state.menuError}
         footer={null}
         closable={false}
         maskClosable={false}
         width="100%"
         centered
         style={{ top: 0, padding: 0 }}
-        styles={{
-          body: {
-            height: '100%',
-            backgroundColor: 'rgba(255, 165, 0, 0.9)', // Orange für Menü-Fehler
-            color: '#fff',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            fontSize: '24px',
-            textAlign: 'center',
-            padding: '20px'
-          }
-        }}
+        styles={{ body: { height: '100%', backgroundColor: 'rgba(255, 165, 0, 0.9)', color: '#fff', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px', textAlign: 'center', padding: '20px' } }}
       >
         <div>
           <h2>Menü-Fehler</h2>
-          <p>{menuError}</p>
+          <p>{state.menuError}</p>
         </div>
       </Modal>
     </Router>
