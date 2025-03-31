@@ -51,13 +51,28 @@ async function fetchMenuRawFromDB(sqliteDB) {
   });
 }
 
-function setupMqtt(io, sqliteDB, fetchMenuFromDB) {
-  const mqttClient = mqtt.connect('mqtt://192.168.10.31:1883'); // Ersetzen Sie mit Ihrem MQTT-Broker-URL
+let cachedMenuData = null;
+
+function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
+  const mqttClient = mqtt.connect('mqtt://192.168.10.31:1883', {
+    protocolVersion: 4,
+    clientId: 'visu-backend-' + Math.random().toString(16).substr(2, 8),
+    reconnectPeriod: 1000,
+  });
   const fixedTopic = 'modbus/data';
+
+  (async () => {
+    try {
+      cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
+      console.log('Initial Cached Menu Data geladen:', JSON.stringify(cachedMenuData, null, 2));
+    } catch (err) {
+      console.error('Fehler beim initialen Laden der Menüdaten:', err);
+    }
+  })();
 
   mqttClient.on('connect', () => {
     console.log('Verbunden mit MQTT-Broker');
-    mqttClient.subscribe(fixedTopic, (err) => {
+    mqttClient.subscribe(fixedTopic, { qos: 0 }, (err) => {
       if (err) {
         console.error(`Fehler beim Abonnieren von ${fixedTopic}:`, err);
       } else {
@@ -76,10 +91,15 @@ function setupMqtt(io, sqliteDB, fetchMenuFromDB) {
         return;
       }
 
-      // Hole die rohe Menüstruktur
-      const menuData = await fetchMenuRawFromDB(sqliteDB);
+      if (!cachedMenuData) {
+        cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
+        console.log('Cached Menu Data nachgeladen:', JSON.stringify(cachedMenuData, null, 2));
+      }
 
-      // Aktualisiere die mqtt-Properties direkt im menuData-Objekt
+      console.log('Empfangene MQTT-Nachricht:', JSON.stringify(payload, null, 2));
+
+      const updates = {};
+
       for (const item of payload) {
         const { topic: itemTopic, value } = item;
         if (!itemTopic || value === undefined) {
@@ -87,36 +107,54 @@ function setupMqtt(io, sqliteDB, fetchMenuFromDB) {
           continue;
         }
 
-        // Durchsuche menuItems nach passenden mqtt-Properties
-        for (const menuItem of menuData.menuItems) {
+        let foundMatch = false;
+
+        for (const menuItem of cachedMenuData.menuItems) {
           for (const [propKey, prop] of Object.entries(menuItem.properties)) {
             if (prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
-              menuItem.properties[propKey].value = value; // Setze den Wert direkt
+              const updateKey = `${menuItem.link}.${propKey}`;
+              updates[updateKey] = value;
+              console.log(`Property hinzugefügt: ${updateKey} = ${value}`);
+              foundMatch = true;
             }
           }
           if (menuItem.sub) {
-            updateSubItems(menuItem.sub, itemTopic, value);
+            processSubItems(menuItem.sub, menuItem.link, itemTopic, value, updates);
+            if (Object.keys(updates).length > Object.keys(updates).filter(k => k.startsWith(menuItem.link)).length) {
+              foundMatch = true;
+            }
           }
+        }
+
+        if (!foundMatch) {
+          console.warn(`Kein Treffer für topic '${itemTopic}' in cachedMenuData`);
         }
       }
 
-      // Sende das aktualisierte Menü an alle Clients
-      io.emit('menu-update', menuData);
-      console.log('MQTT-Update verarbeitet und gesendet:', payload);
+      console.log('Finales updates-Objekt:', JSON.stringify(updates, null, 2));
+
+      if (Object.keys(updates).length > 0) {
+        io.emit('mqtt-property-update', updates);
+        console.log('MQTT-Property-Update gesendet:', JSON.stringify(updates, null, 2));
+      } else {
+        console.warn('Keine Updates generiert für die MQTT-Nachricht');
+      }
     } catch (err) {
       console.error('Fehler beim Verarbeiten der MQTT-Nachricht:', err);
     }
   });
 
-  function updateSubItems(subItems, itemTopic, value) {
+  function processSubItems(subItems, parentLink, itemTopic, value, updates) {
     for (const subItem of subItems) {
       for (const [propKey, prop] of Object.entries(subItem.properties)) {
         if (prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
-          subItem.properties[propKey].value = value;
+          const updateKey = `${subItem.link}.${propKey}`;
+          updates[updateKey] = value;
+          console.log(`SubItem-Property hinzugefügt: ${updateKey} = ${value}`);
         }
       }
       if (subItem.sub) {
-        updateSubItems(subItem.sub, itemTopic, value);
+        processSubItems(subItem.sub, subItem.link, itemTopic, value, updates);
       }
     }
   }
@@ -125,7 +163,20 @@ function setupMqtt(io, sqliteDB, fetchMenuFromDB) {
     console.error('MQTT-Verbindungsfehler:', err);
   });
 
+  mqttClient.on('reconnect', () => {
+    console.log('Versuche, erneut mit MQTT-Broker zu verbinden...');
+  });
+
   return mqttClient;
 }
 
-module.exports = { setupMqtt };
+async function updateCachedMenuData(sqliteDB) {
+  try {
+    cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
+    console.log('Cached Menu Data aktualisiert:', JSON.stringify(cachedMenuData, null, 2));
+  } catch (err) {
+    console.error('Fehler beim Aktualisieren des Cached Menu Data:', err);
+  }
+}
+
+module.exports = { setupMqtt, updateCachedMenuData };

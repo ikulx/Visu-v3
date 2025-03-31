@@ -1,4 +1,4 @@
-// server.js (vollständige Datei mit Anpassung)
+// src/server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -7,7 +7,14 @@ const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const dbRoutes = require('./dbRoutes');
-const { setupMqtt } = require('./mqttHandler');
+const { setupMqtt, updateCachedMenuData } = require('./mqttHandler');
+const {
+  fetchMenuForFrontend,
+  setupMenuHandlers,
+  updateMenuHandler,
+  updatePropertiesHandler,
+  defaultMenu
+} = require('./menuHandler');
 
 const app = express();
 const server = http.createServer(app);
@@ -59,212 +66,14 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
-const defaultMenu = {
-  menuItems: [
-    {
-      link: '/',
-      label: 'Home',
-      svg: 'home',
-      properties: {
-        "Anlagenamen": "Init",
-        "Projektnummer": "x",
-        "Schemanummer": "y"
-      }
-    }
-  ]
-};
-
-async function resolvePropertyValue(property) {
-  if (property.source_type === 'static') {
-    return property.value;
-  } else if (property.source_type === 'dynamic') {
-    return new Promise((resolve) => {
-      sqliteDB.get(
-        `SELECT VAR_VALUE FROM QHMI_VARIABLES WHERE NAME = ?`,
-        [property.source_key],
-        (err, row) => {
-          resolve(err || !row ? null : row.VAR_VALUE);
-        }
-      );
-    });
-  } else if (property.source_type === 'mqtt') {
-    return null; // Für mqtt wird der Wert später dynamisch eingefügt
-  }
-  return null;
-}
-
-async function fetchMenuFromDB() {
-  return new Promise((resolve, reject) => {
-    sqliteDB.all(`
-      SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key
-      FROM menu_items mi
-      LEFT JOIN menu_properties mp ON mi.id = mp.menu_item_id
-      ORDER BY mi.sort_order ASC
-    `, [], async (err, rows) => {
-      if (err) {
-        console.error("Fehler beim Abrufen des Menüs:", err);
-        return reject(err);
-      }
-
-      const menuItems = [];
-      const itemMap = new Map();
-
-      rows.forEach(row => {
-        if (!itemMap.has(row.id)) {
-          itemMap.set(row.id, {
-            link: row.link,
-            label: row.label,
-            svg: row.svg,
-            enable: row.enable === 1,
-            properties: {},
-            sub: row.parent_id ? undefined : []
-          });
-        }
-        const item = itemMap.get(row.id);
-        if (row.key) {
-          item.properties[row.key] = {
-            value: row.value,
-            source_type: row.source_type,
-            source_key: row.source_key
-          };
-        }
-      });
-
-      itemMap.forEach((item, id) => {
-        const row = rows.find(r => r.id === id);
-        if (row.parent_id && itemMap.has(row.parent_id)) {
-          itemMap.get(row.parent_id).sub.push(item);
-        } else if (!row.parent_id) {
-          menuItems.push(item);
-        }
-      });
-
-      for (const item of itemMap.values()) {
-        for (const key of Object.keys(item.properties)) {
-          const property = item.properties[key];
-          if (property.source_type !== 'mqtt') { // mqtt wird später aktualisiert
-            item.properties[key] = await resolvePropertyValue(property);
-          } else {
-            item.properties[key] = null; // Initial NULL für mqtt
-          }
-        }
-        if (item.sub) {
-          for (const subItem of item.sub) {
-            for (const key of Object.keys(subItem.properties)) {
-              const property = subItem.properties[key];
-              if (property.source_type !== 'mqtt') {
-                subItem.properties[key] = await resolvePropertyValue(property);
-              } else {
-                subItem.properties[key] = null;
-              }
-            }
-          }
-        }
-      }
-
-      resolve({ menuItems });
-    });
-  });
-}
-
-let currentMenu;
-(async () => {
-  try {
-    currentMenu = await fetchMenuFromDB();
-    console.log('Menü aus Datenbank geladen.');
-  } catch (err) {
-    console.warn('Fehler beim Laden des Menüs – verwende Default-Menü.');
-    currentMenu = defaultMenu;
-  }
-})();
-
 let currentFooter = { temperature: '–' };
 
-app.post('/update-menu', async (req, res) => {
-  const newMenu = req.body;
-  try {
-    await new Promise((resolve, reject) => {
-      sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => {
-        if (err) reject(err);
-        sqliteDB.run(`DELETE FROM menu_items`, [], (err) => (err ? reject(err) : resolve()));
-      });
-    });
+// Menü-Handler initialisieren
+const { currentMenu } = setupMenuHandlers(io, sqliteDB, updateCachedMenuData, fetchMenuForFrontend);
 
-    await insertMenuItems(newMenu.menuItems, null, 0);
-    currentMenu = await fetchMenuFromDB();
-    io.emit('menu-update', currentMenu);
-    res.sendStatus(200);
-  } catch (err) {
-    console.error('Fehler beim Aktualisieren des Menüs:', err);
-    res.status(500).send('Fehler beim Aktualisieren des Menüs');
-  }
-});
-
-async function insertMenuItems(items, parentId, sortOrderStart) {
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const sortOrder = sortOrderStart + i;
-
-    const itemId = await new Promise((resolve, reject) => {
-      sqliteDB.run(
-        `INSERT INTO menu_items (label, link, svg, enable, parent_id, sort_order) VALUES (?, ?, ?, ?, ?, ?)`,
-        [item.label, item.link, item.svg, item.enable ? 1 : 0, parentId, sortOrder],
-        function (err) {
-          if (err) reject(err);
-          else resolve(this.lastID);
-        }
-      );
-    });
-
-    if (item.properties) {
-      for (const [key, propData] of Object.entries(item.properties)) {
-        const { value, source_type, source_key } = typeof propData === 'object' && propData !== null
-          ? propData
-          : { value: propData, source_type: 'static', source_key: null };
-
-        // Für mqtt immer NULL, für static den Wert, für dynamic auch NULL
-        const insertValue = source_type === 'static' ? value : null;
-
-        await sqliteDB.run(
-          `INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) VALUES (?, ?, ?, ?, ?)`,
-          [itemId, key, insertValue, source_type || 'static', source_key || null]
-        );
-      }
-    }
-
-    if (item.sub && Array.isArray(item.sub)) {
-      await insertMenuItems(item.sub, itemId, 0);
-    }
-  }
-}
-
-app.post('/update-properties', async (req, res) => {
-  const { link, properties } = req.body;
-  try {
-    const menuItem = await new Promise((resolve, reject) => {
-      sqliteDB.get(`SELECT id FROM menu_items WHERE link = ?`, [link], (err, row) => {
-        if (err) reject(err);
-        else if (!row) reject(new Error('Menu item not found'));
-        else resolve(row);
-      });
-    });
-
-    for (const [key, value] of Object.entries(properties)) {
-      await sqliteDB.run(
-        `UPDATE menu_properties SET value = ?, updated_at = strftime('%Y-%m-%dT%H:%M','now', 'localtime')
-         WHERE menu_item_id = ? AND key = ?`,
-        [value, menuItem.id, key]
-      );
-    }
-
-    currentMenu = await fetchMenuFromDB();
-    io.emit('menu-update', currentMenu);
-    res.sendStatus(200);
-  } catch (err) {
-    console.error('Fehler beim Aktualisieren der Properties:', err);
-    res.status(404).send('Menu item or property not found');
-  }
-});
+// API-Endpunkte
+app.post('/update-menu', (req, res) => updateMenuHandler(req, res, sqliteDB, fetchMenuForFrontend));
+app.post('/update-properties', (req, res) => updatePropertiesHandler(req, res, sqliteDB, fetchMenuForFrontend));
 
 app.post('/setFooter', (req, res) => {
   const footerUpdate = req.body;
@@ -351,7 +160,6 @@ function broadcastSettings(socket = null, user = null) {
 
 io.on('connection', (socket) => {
   console.log('Neuer Client verbunden:', socket.id);
-  socket.emit('menu-update', currentMenu);
   socket.emit('footer-update', currentFooter);
   broadcastSettings(socket);
 
@@ -398,29 +206,15 @@ io.on('connection', (socket) => {
 
       sendFullDbUpdate();
       broadcastSettings();
+      // Neu: Nach Settings-Update auch das Menü neu laden und an alle Clients senden
+      fetchMenuForFrontend(sqliteDB)
+        .then((menu) => {
+          io.emit("menu-update", menu);
+        })
+        .catch(err => console.error("Fehler beim Aktualisieren des Menüs:", err));
+
       socket.emit("update-success", { changes: this.changes });
     });
-  });
-
-  socket.on('update-menu-config', async (newMenu) => {
-    try {
-      await new Promise((resolve, reject) => {
-        sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => {
-          if (err) reject(err);
-          sqliteDB.run(`DELETE FROM menu_items`, [], (err) => (err ? reject(err) : resolve()));
-        });
-      });
-
-      await insertMenuItems(newMenu.menuItems, null, 0);
-      currentMenu = await fetchMenuFromDB();
-
-      console.log('Updated menu before sending:', JSON.stringify(currentMenu, null, 2));
-      socket.emit('menu-config-success', { message: 'Menü erfolgreich aktualisiert', menu: currentMenu });
-      socket.broadcast.emit('menu-update', currentMenu);
-    } catch (err) {
-      console.error('Fehler beim Aktualisieren des Menüs:', err);
-      socket.emit('menu-config-error', { message: 'Fehler beim Speichern des Menüs' });
-    }
   });
 
   socket.on('disconnect', () => {
@@ -430,7 +224,7 @@ io.on('connection', (socket) => {
 
 app.use('/db', dbRoutes);
 
-setupMqtt(io, sqliteDB, fetchMenuFromDB);
+setupMqtt(io, sqliteDB, fetchMenuForFrontend);
 
 const PORT = 3001;
 server.listen(PORT, () => {

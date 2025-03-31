@@ -23,11 +23,11 @@
         </text>
         <!-- Zentrierter Text: Projektnummer -->
         <text fill="white" xml:space="preserve"  font-size="20" font-weight="500" letter-spacing="0em" text-anchor="middle">
-          <tspan x="50%" y="318.273">{{schemanummerLabel}} <tspan class="projektnummer">9999999</tspan></tspan>
+          <tspan x="50%" y="318.273">{{schemanummerLabel}} <tspan class="schemanummer">9999999</tspan></tspan>
         </text>
         <!-- Zentrierter Text: Schemanummer -->
         <text fill="white" xml:space="preserve"  font-size="20" font-weight="500" letter-spacing="0em" text-anchor="middle">
-          <tspan x="50%" y="348.273">{{projektnummerLabel}} <tspan class="schemanummer">9999999</tspan></tspan>
+          <tspan x="50%" y="348.273">{{projektnummerLabel}} <tspan class="projektnummer">9999999</tspan></tspan>
         </text>
       </g>
       <g id="ygnis_CMYK_transparent-background_white1" clip-path="url(#clip0_538_167)">

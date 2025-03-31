@@ -25,11 +25,38 @@ function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [connectionError, setConnectionError] = useState(null);
 
+  // Stabilisierte menuItems für die Übergabe an Komponenten
+  const stabilizedMenuItems = useMemo(() => {
+    return JSON.parse(JSON.stringify(menuData.menuItems)); // Tiefe Kopie für Stabilität
+  }, [menuData.menuItems]);
+
   useEffect(() => {
-    socket.on('menu-update', (data) => {
-      console.log('Menu update received:', JSON.stringify(data, null, 2));
+    const handleMenuUpdate = (data) => {
+      console.log('Menu update received in App.js:', JSON.stringify(data, null, 2));
       setMenuData(data);
-    });
+    };
+
+    const handleMqttPropertyUpdate = (updates) => {
+      console.log('MQTT property update received in App.js:', JSON.stringify(updates, null, 2));
+      setMenuData(prevData => {
+        const newMenuItems = JSON.parse(JSON.stringify(prevData.menuItems)); // Tiefe Kopie
+        for (const [key, value] of Object.entries(updates)) {
+          const [link, propKey] = key.split('.');
+          const updateItem = (items) => {
+            for (const item of items) {
+              if (item.link === link) {
+                item.properties[propKey] = value;
+              }
+              if (item.sub) {
+                updateItem(item.sub);
+              }
+            }
+          };
+          updateItem(newMenuItems);
+        }
+        return { menuItems: newMenuItems };
+      });
+    };
 
     const onConnect = () => {
       console.log('Socket connected');
@@ -55,6 +82,8 @@ function App() {
       setConnectionError(t('reconnectError', { message: error.message || 'Unknown error' }));
     };
 
+    socket.on('menu-update', handleMenuUpdate);
+    socket.on('mqtt-property-update', handleMqttPropertyUpdate);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
@@ -65,7 +94,8 @@ function App() {
     }
 
     return () => {
-      socket.off('menu-update');
+      socket.off('menu-update', handleMenuUpdate);
+      socket.off('mqtt-property-update', handleMqttPropertyUpdate);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
@@ -73,15 +103,17 @@ function App() {
     };
   }, [t]);
 
-  const flatMenuItems = flattenMenuItems(menuData.menuItems);
+  const flatMenuItems = useMemo(() => flattenMenuItems(stabilizedMenuItems), [stabilizedMenuItems]);
   const allSvgs = useMemo(() => {
     const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
     return Array.from(new Set(svgNames));
   }, [flatMenuItems]);
 
+  // console.log('Stabilized MenuItems passed to MainLayout:', JSON.stringify(stabilizedMenuItems, null, 2));
+
   return (
     <Router>
-      <MainLayout menuItems={menuData.menuItems}>
+      <MainLayout menuItems={stabilizedMenuItems}>
         <Suspense
           fallback={
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>
