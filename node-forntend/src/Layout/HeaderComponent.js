@@ -1,7 +1,7 @@
 // src/HeaderComponent.js
 import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button, Modal, Radio } from 'antd';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   HomeOutlined,
   MenuOutlined,
@@ -75,7 +75,7 @@ const HeaderComponent = ({ menuItems }) => {
   // Fallback, falls menuItemsForMenu leer ist
   if (menuItemsForMenu.length === 0) {
     console.warn('No valid menu items generated.');
-    // menuItemsForMenu.push({ key: '/hg01', label: 'Heizgruppen (Fallback)' });
+    menuItemsForMenu.push({ key: '/', label: 'Home (Fallback)' });
   }
 
   const isHomeActive = location.pathname === '/';
@@ -242,8 +242,7 @@ const HeaderComponent = ({ menuItems }) => {
           placement="left"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
-          styles={{ header: { borderBottom: 'none' } }}
-          bodyStyle={{ padding: 0 }}
+          styles={{ header: { borderBottom: 'none' }, body: {padding: 0} }}
         >
           <Menu
             mode="inline"

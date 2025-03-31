@@ -15,11 +15,13 @@ const darkTheme = {
     colorTextBase: '#fff',         // Basis-Textfarbe
     colorBorder: '#434343',        // Rahmenfarbe
     colorBgContainer: '#141414',   // Hintergrund für Container
-    colorTextSecondary: '#d9d9d9', // Sekundäre Textfarbe
+    // colorTextSecondary: '#d9d9d9', // Sekundäre Textfarbe
     fontSize: 14,                  // Basis-Schriftgröße
     borderRadius: 4,               // Abgerundete Ecken
+    
   },
   components: {
+    
     Menu: {
       itemBg: '#383838',           // Hintergrund für Menüpunkte
       itemColor: '#fff',           // Textfarbe für Menüpunkte
@@ -30,8 +32,10 @@ const darkTheme = {
     },
     Button: {
       colorPrimary: '#ffb000',     // Primäre Button-Farbe
-      colorPrimaryHover: 'none', // Hover-Farbe
-      border: 'none',
+      colorPrimaryHover: '#7e7e7e', // Hover-Farbe
+      defaultBg:'#333333'
+
+
     },
     
     Layout: {

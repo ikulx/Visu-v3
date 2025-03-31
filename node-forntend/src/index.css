@@ -16,6 +16,14 @@ html, body, #root {
   align-items: center;
 }
 
+
+.ant-btn-primary,
+.ant-btn-primary:hover,
+.ant-btn-primary:focus,
+.ant-btn-primary:active {
+  box-shadow: none !important;
+}
+
 /* Für Webkit-Browser */
 ::-webkit-scrollbar {
   width: 8px;

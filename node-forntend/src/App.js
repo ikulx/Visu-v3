@@ -136,7 +136,7 @@ function App() {
       </MainLayout>
 
       <Modal
-        visible={!!connectionError}
+        open={!!connectionError}
         footer={null}
         closable={false}
         maskClosable={false}

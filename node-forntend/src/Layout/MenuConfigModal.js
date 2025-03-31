@@ -292,12 +292,12 @@ const MenuConfigModal = ({ visible, onClose }) => {
       width={900}
       centered
       style={{ top: 20 }}
-      bodyStyle={{ backgroundColor: '#141414', color: '#fff', padding: '20px' }}
+      styles={{ body: {backgroundColor: '#141414', color: '#fff', padding: '20px' }}}
     >
       <div style={{ display: 'flex', gap: '20px' }}>
         <div style={{ flex: 1 }}>
           <div style={{ marginBottom: '10px', display: 'flex', gap: '10px' }}>
-            <Button type="primary" icon={<PlusOutlined />} onClick={addNewItem}>
+            <Button  icon={<PlusOutlined />} onClick={addNewItem}>
               {t('addItem')}
             </Button>
             <Button

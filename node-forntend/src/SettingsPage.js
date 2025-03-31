@@ -83,7 +83,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
       const group = groupedData[mainKey];
       const subItems = [];
       if (group.noSub.length > 0) {
-        subItems.push({ key: `${mainKey}___nosub`, label: t('Sonstiges') });
+        items.push({ key: `${mainKey}___nosub`, label: mainKey });
       }
       Object.keys(group.withSub).forEach(subKey => {
         subItems.push({ key: `${mainKey}___${subKey}`, label: subKey });
