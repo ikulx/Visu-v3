@@ -37,13 +37,11 @@ const HeaderComponent = ({ menuItems }) => {
   const validUsers = pinMapping;
 
   const createMenuItem = (item) => {
-    // console.log('Processing menu item:', JSON.stringify(item, null, 2));
     if (item.sub && Array.isArray(item.sub) && item.sub.length > 0) { // Nur wenn sub nicht leer ist
       const enabledChildren = item.sub.filter(
         (child) => !child.hasOwnProperty('enable') || child.enable === "true" || child.enable === true
       );
       if (enabledChildren.length === 0) {
-        // console.log('No enabled children for:', item.label);
         return null;
       } else if (enabledChildren.length === 1) {
         return createMenuItem(enabledChildren[0]);
@@ -66,13 +64,9 @@ const HeaderComponent = ({ menuItems }) => {
     }
   };
 
-  // console.log('Raw menuItems before filtering:', JSON.stringify(menuItems, null, 2));
   const filteredItems = menuItems.filter((item) => item.link !== '/');
-  // console.log('Filtered items (excluding "/"):', JSON.stringify(filteredItems, null, 2));
   const menuItemsForMenu = filteredItems.map(createMenuItem).filter((item) => item !== null);
-  // console.log('Generated menuItemsForMenu:', JSON.stringify(menuItemsForMenu, null, 2));
 
-  // Fallback, falls menuItemsForMenu leer ist
   if (menuItemsForMenu.length === 0) {
     console.warn('No valid menu items generated.');
     menuItemsForMenu.push({ key: '/', label: 'Home (Fallback)' });
@@ -82,7 +76,6 @@ const HeaderComponent = ({ menuItems }) => {
   const activeColor = "#ffb000";
 
   const handleMenuClick = (e) => {
-    // console.log('Menu item clicked:', e.key);
     if (e.key.startsWith('/')) {
       navigate(e.key);
       setDrawerVisible(false);
@@ -154,16 +147,18 @@ const HeaderComponent = ({ menuItems }) => {
             >
               <SettingOutlined style={{ fontSize: '30px' }} />
             </Button>
-            <Button
-              type="default"
-              onClick={() => {
-                setLanguageModalVisible(false);
-                setMenuConfigVisible(true);
-              }}
-              style={{ marginRight: '10px', backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}
-            >
-              <ControlOutlined style={{ fontSize: '30px' }} />
-            </Button>
+            {loggedInUser === 'admin' && (
+              <Button
+                type="default"
+                onClick={() => {
+                  setLanguageModalVisible(false);
+                  setMenuConfigVisible(true);
+                }}
+                style={{ marginRight: '10px', backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}
+              >
+                <ControlOutlined style={{ fontSize: '30px' }} />
+              </Button>
+            )}
             <Button
               type="default"
               onClick={() => setLoggedInUser(null)}

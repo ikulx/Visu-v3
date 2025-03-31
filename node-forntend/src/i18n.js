@@ -49,6 +49,7 @@ const resources = {
       "BWW": "HOT WATER",
       "HG": "HEATING GROUP",
       "PS": "STORAGE",
+      Heizgruppen: "Heating groups",
       // Neue Übersetzungen für Verbindungsfehler
       connectionLostTitle: "Connection Issue",
       connectionLost: "Connection to server lost",

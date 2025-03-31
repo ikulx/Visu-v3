@@ -361,10 +361,10 @@ const MenuConfigModal = ({ visible, onClose }) => {
                   }}
                 </Form.Item>
               </Form.Item>
-              <Form.Item name="link" label={t('link')} rules={[{ required: true }]}>
+              <Form.Item name="link" label={t('link')} rules={[{ required: false }]}>
                 <Input />
               </Form.Item>
-              <Form.Item name="svg" label={t('svg')} rules={[{ required: true }]}>
+              <Form.Item name="svg" label={t('svg')} rules={[{ required: false }]}>
                 <Input />
               </Form.Item>
               <Form.Item name="enable" label={t('enable')} valuePropName="checked">
