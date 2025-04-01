@@ -1,41 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Modal,
-  Form,
-  Input,
-  Button,
-  Select,
-  Switch,
-  Tree,
-  message,
-  Divider
-} from 'antd';
-import {
-  PlusOutlined,
-  DeleteOutlined,
-  CopyOutlined
-} from '@ant-design/icons';
-import socket from '../socket';
+import {  Modal,  Tabs,  Form,  Input,  Button,  Select,  Switch,  Tree,  message,  Divider,  Table} from 'antd';
+import {  PlusOutlined,  DeleteOutlined,  CopyOutlined, LineChartOutlined} from '@ant-design/icons';
+import socket from '../socket'; // Socket.IO-Instanz
 import { useTranslation } from 'react-i18next';
 
 const { Option } = Select;
+const { TabPane } = Tabs;
 
 const MenuConfigModal = ({ visible, onClose }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [menuData, setMenuData] = useState({ menuItems: [] });
   const [selectedNode, setSelectedNode] = useState(null);
+  const [loggingSettings, setLoggingSettings] = useState([]);
+  const [newTopic, setNewTopic] = useState('');
 
+  // Daten anfordern, wenn das Modal geöffnet wird
   useEffect(() => {
     if (visible) {
       socket.emit('request-menu-config');
+      socket.emit('request-logging-settings');
     }
+  }, [visible]);
 
+  // Socket.IO-Listener für Updates
+  useEffect(() => {
     const onMenuConfigUpdate = (data) => {
       console.log('Menu config received:', JSON.stringify(data, null, 2));
-      setMenuData(data); // Direktes Überschreiben des States
+      setMenuData(data);
       if (selectedNode) {
-        // Aktualisiere das Formular, falls ein Knoten ausgewählt ist
         const updatedNode = findNodeByLinkAndLabel(data.menuItems, selectedNode.link, selectedNode.label);
         if (updatedNode) {
           setSelectedNode(updatedNode);
@@ -55,14 +48,20 @@ const MenuConfigModal = ({ visible, onClose }) => {
       message.error(t('menuUpdateFailed', { message: error.message }));
     };
 
+    const onLoggingSettingsUpdate = (data) => {
+      setLoggingSettings(data);
+    };
+
     socket.on('menu-config-update', onMenuConfigUpdate);
     socket.on('menu-config-success', onMenuConfigSuccess);
     socket.on('menu-config-error', onMenuConfigError);
+    socket.on('logging-settings-update', onLoggingSettingsUpdate);
 
     return () => {
       socket.off('menu-config-update', onMenuConfigUpdate);
       socket.off('menu-config-success', onMenuConfigSuccess);
       socket.off('menu-config-error', onMenuConfigError);
+      socket.off('logging-settings-update', onLoggingSettingsUpdate);
     };
   }, [visible, t, selectedNode]);
 
@@ -309,9 +308,44 @@ const MenuConfigModal = ({ visible, onClose }) => {
     form.resetFields();
   };
 
+  // Logging-Einstellungen Funktionen
+  const handleAddLoggingSetting = () => {
+    if (newTopic.trim()) {
+      socket.emit('update-logging-setting', { topic: newTopic, enabled: true });
+      setNewTopic('');
+    }
+  };
+
+  const handleToggleLoggingSetting = (topic, enabled) => {
+    socket.emit('update-logging-setting', { topic, enabled: !enabled });
+  };
+
+  const loggingColumns = [
+    {
+      title: t('Topic'),
+      dataIndex: 'topic',
+      key: 'topic',
+    },
+    {
+      title: t('Enabled'),
+      dataIndex: 'enabled',
+      key: 'enabled',
+      render: (enabled, record) => (
+        <Button onClick={() => handleToggleLoggingSetting(record.topic, enabled)}>
+          {enabled ? t('Disable') : t('Enable')}
+        </Button>
+      ),
+    },
+    {
+      title: t('Description'),
+      dataIndex: 'description',
+      key: 'description',
+    },
+  ];
+
   return (
     <Modal
-      title={t('menuConfiguration')}
+      title={t('Configuration')}
       open={visible}
       onCancel={onClose}
       footer={null}
@@ -320,235 +354,275 @@ const MenuConfigModal = ({ visible, onClose }) => {
       style={{ top: 20 }}
       styles={{ body: { backgroundColor: '#141414', color: '#fff', padding: '20px' } }}
     >
-      <div style={{ display: 'flex', gap: '20px' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ marginBottom: '10px', display: 'flex', gap: '10px' }}>
-            <Button icon={<PlusOutlined />} onClick={addNewItem}>
-              {t('addItem')}
-            </Button>
-            <Button
-              type="default"
-              icon={<PlusOutlined />}
-              onClick={addSubMenu}
-              disabled={!selectedNode}
-            >
-              {t('addSubMenu')}
-            </Button>
-          </div>
-          <Divider style={{ backgroundColor: '#fff' }} />
-          <Tree
-            treeData={treeData}
-            onSelect={onSelect}
-            height={400}
-            style={{ backgroundColor: '#1f1f1f', color: '#fff', padding: '10px' }}
-          />
-        </div>
-        <div style={{ flex: 1 }}>
-          {selectedNode ? (
-            <Form form={form} layout="vertical" onFinish={onFinish} style={{ color: '#fff' }}>
-              <Form.Item label={t('label')}>
-                <Form.Item
-                  name={['label', 'source_type']}
-                  noStyle
-                  rules={[{ required: true, message: t('sourceTypeRequired') }]}
+      <Tabs defaultActiveKey="1" style={{ color: '#fff' }}>
+        {/* Tab für Menü-Einstellungen */}
+        <TabPane tab={t('Menu Settings')} key="1">
+          <div style={{ display: 'flex', gap: '20px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ marginBottom: '10px', display: 'flex', gap: '10px' }}>
+                <Button icon={<PlusOutlined />} onClick={addNewItem}>
+                  {t('addItem')}
+                </Button>
+                <Button
+                  type="default"
+                  icon={<PlusOutlined />}
+                  onClick={addSubMenu}
+                  disabled={!selectedNode}
                 >
-                  <Select style={{ width: 120 }} onChange={() => form.validateFields()}>
-                    <Option value="static">{t('static')}</Option>
-                    <Option value="dynamic">{t('dynamic')}</Option>
-                    <Option value="mqtt">{t('mqtt')}</Option>
-                  </Select>
-                </Form.Item>
-                <Form.Item
-                  noStyle
-                  shouldUpdate={(prev, curr) =>
-                    prev.label?.source_type !== curr.label?.source_type
-                  }
-                >
-                  {({ getFieldValue }) => {
-                    const type = getFieldValue(['label', 'source_type']) || 'static';
-                    return type === 'static' ? (
-                      <Form.Item
-                        name={['label', 'value']}
-                        noStyle
-                        rules={[{ required: true, message: t('labelValueRequired') }]}
-                      >
-                        <Input placeholder={t('labelValue')} style={{ width: 200, marginLeft: 10 }} />
-                      </Form.Item>
-                    ) : (
-                      <Form.Item
-                        name={['label', 'source_key']}
-                        noStyle
-                        rules={[{ required: true, message: t('labelSourceKeyRequired') }]}
-                      >
-                        <Input placeholder={t('labelSourceKey')} style={{ width: 200, marginLeft: 10 }} />
-                      </Form.Item>
-                    );
-                  }}
-                </Form.Item>
-              </Form.Item>
-              <Form.Item name="link" label={t('link')} rules={[{ required: false }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="svg" label={t('defaultSvg')} rules={[{ required: false }]}>
-                <Input placeholder="Standard-SVG (Fallback)" />
-              </Form.Item>
-              <Form.Item name="enable" label={t('enable')} valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="qhmiVariable" label={t('qhmiVariable')} rules={[{ required: false }]}>
-                <Input placeholder="Name der QhmiVariable" />
-              </Form.Item>
-              <Form.List name="svgConditions">
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map(({ key, name, ...restField }) => (
-                      <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'value']}
-                          label={t('conditionValue')}
-                          rules={[{ required: true, message: t('conditionValueRequired') }]}
-                        >
-                          <Input placeholder="Wert" />
-                        </Form.Item>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'svg']}
-                          label={t('svg')}
-                          rules={[{ required: true, message: t('svgRequired') }]}
-                        >
-                          <Input placeholder="SVG-Datei" />
-                        </Form.Item>
-                        <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                      </div>
-                    ))}
-                    <Button type="dashed" onClick={() => add()} block>
-                      {t('addSvgCondition')}
-                    </Button>
-                  </>
-                )}
-              </Form.List>
-              <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-              <Form.List name="properties">
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map(({ key, name, ...restField }) => {
-                      const sourceType =
-                        form.getFieldValue(['properties', name, 'source_type']) || 'static';
-                      return (
-                        <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                  {t('addSubMenu')}
+                </Button>
+              </div>
+              <Divider style={{ backgroundColor: '#fff' }} />
+              <Tree
+                treeData={treeData}
+                onSelect={onSelect}
+                height={400}
+                style={{ backgroundColor: '#1f1f1f', color: '#fff', padding: '10px' }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              {selectedNode ? (
+                <Form form={form} layout="vertical" onFinish={onFinish} style={{ color: '#fff' }}>
+                  <Form.Item label={t('label')}>
+                    <Form.Item
+                      name={['label', 'source_type']}
+                      noStyle
+                      rules={[{ required: true, message: t('sourceTypeRequired') }]}
+                    >
+                      <Select style={{ width: 120 }} onChange={() => form.validateFields()}>
+                        <Option value="static">{t('static')}</Option>
+                        <Option value="dynamic">{t('dynamic')}</Option>
+                        <Option value="mqtt">{t('mqtt')}</Option>
+                      </Select>
+                    </Form.Item>
+                    <Form.Item
+                      noStyle
+                      shouldUpdate={(prev, curr) =>
+                        prev.label?.source_type !== curr.label?.source_type
+                      }
+                    >
+                      {({ getFieldValue }) => {
+                        const type = getFieldValue(['label', 'source_type']) || 'static';
+                        return type === 'static' ? (
                           <Form.Item
-                            {...restField}
-                            name={[name, 'key']}
-                            rules={[{ required: true, message: t('propertyKeyRequired') }]}
+                            name={['label', 'value']}
+                            noStyle
+                            rules={[{ required: true, message: t('labelValueRequired') }]}
                           >
-                            <Input placeholder={t('key')} />
+                            <Input placeholder={t('labelValue')} style={{ width: 200, marginLeft: 10 }} />
                           </Form.Item>
-                          {sourceType === 'static' ? (
+                        ) : (
+                          <Form.Item
+                            name={['label', 'source_key']}
+                            noStyle
+                            rules={[{ required: true, message: t('labelSourceKeyRequired') }]}
+                          >
+                            <Input placeholder={t('labelSourceKey')} style={{ width: 200, marginLeft: 10 }} />
+                          </Form.Item>
+                        );
+                      }}
+                    </Form.Item>
+                  </Form.Item>
+                  <Form.Item name="link" label={t('link')} rules={[{ required: false }]}>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="svg" label={t('defaultSvg')} rules={[{ required: false }]}>
+                    <Input placeholder="Standard-SVG (Fallback)" />
+                  </Form.Item>
+                  <Form.Item name="enable" label={t('enable')} valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="qhmiVariable" label={t('qhmiVariable')} rules={[{ required: false }]}>
+                    <Input placeholder="Name der QhmiVariable" />
+                  </Form.Item>
+                  <Form.List name="svgConditions">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...restField }) => (
+                          <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
                             <Form.Item
                               {...restField}
                               name={[name, 'value']}
-                              rules={[{ required: true, message: t('propertyValueRequired') }]}
+                              label={t('conditionValue')}
+                              rules={[{ required: true, message: t('conditionValueRequired') }]}
                             >
-                              <Input placeholder={t('value')} />
+                              <Input placeholder="Wert" />
                             </Form.Item>
-                          ) : (
                             <Form.Item
                               {...restField}
-                              name={[name, 'source_key']}
-                              rules={[{ required: true, message: t('sourceKeyRequired') }]}
+                              name={[name, 'svg']}
+                              label={t('svg')}
+                              rules={[{ required: true, message: t('svgRequired') }]}
                             >
-                              <Input placeholder={t('sourceKey')} />
+                              <Input placeholder="SVG-Datei" />
                             </Form.Item>
-                          )}
-                          <Form.Item
-                            {...restField}
-                            name={[name, 'source_type']}
-                            rules={[{ required: true, message: t('sourceTypeRequired') }]}
-                          >
-                            <Select placeholder={t('sourceType')} onChange={() => form.validateFields()}>
-                              <Option value="static">{t('static')}</Option>
-                              <Option value="dynamic">{t('dynamic')}</Option>
-                              <Option value="mqtt">{t('mqtt')}</Option>
-                            </Select>
-                          </Form.Item>
-                          <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                        </div>
-                      );
-                    })}
-                    <Button type="dashed" onClick={() => add()} block>
-                      {t('addProperty')}
+                            <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                          </div>
+                        ))}
+                        <Button type="dashed" onClick={() => add()} block>
+                          {t('addSvgCondition')}
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
+                  <Form.List name="properties">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...restField }) => {
+                          const sourceType =
+                            form.getFieldValue(['properties', name, 'source_type']) || 'static';
+                          return (
+                            <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'key']}
+                                rules={[{ required: true, message: t('propertyKeyRequired') }]}
+                              >
+                                <Input placeholder={t('key')} />
+                              </Form.Item>
+                              {sourceType === 'static' ? (
+                                <Form.Item
+                                  {...restField}
+                                  name={[name, 'value']}
+                                  rules={[{ required: true, message: t('propertyValueRequired') }]}
+                                >
+                                  <Input placeholder={t('value')} />
+                                </Form.Item>
+                              ) : (
+                                <Form.Item
+                                  {...restField}
+                                  name={[name, 'source_key']}
+                                  rules={[{ required: true, message: t('sourceKeyRequired') }]}
+                                >
+                                  <Input placeholder={t('sourceKey')} />
+                                </Form.Item>
+                              )}
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'source_type']}
+                                rules={[{ required: true, message: t('sourceTypeRequired') }]}
+                              >
+                                <Select placeholder={t('sourceType')} onChange={() => form.validateFields()}>
+                                  <Option value="static">{t('static')}</Option>
+                                  <Option value="dynamic">{t('dynamic')}</Option>
+                                  <Option value="mqtt">{t('mqtt')}</Option>
+                                </Select>
+                              </Form.Item>
+                              <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                            </div>
+                          );
+                        })}
+                        <Button type="dashed" onClick={() => add()} block>
+                          {t('addProperty')}
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
+                  <Form.List name="actions">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...restField }) => (
+                          <div key={key} style={{ marginBottom: '20px', border: '1px solid #434343', padding: '10px' }}>
+                            <Form.Item
+                              {...restField}
+                              name={[name, 'actionName']}
+                              label={t('actionName')}
+                              rules={[{ required: true, message: t('actionNameRequired') }]}
+                            >
+                              <Input placeholder={t('actionName')} />
+                            </Form.Item>
+                            <Form.List name={[name, 'qhmiNames']}>
+                              {(qhmiFields, { add: addQhmi, remove: removeQhmi }) => (
+                                <>
+                                  {qhmiFields.map(({ key: qhmiKey, name: qhmiName, ...qhmiRestField }) => (
+                                    <div key={qhmiKey} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                                      <Form.Item
+                                        {...qhmiRestField}
+                                        name={[qhmiName]}
+                                        rules={[{ required: true, message: t('qhmiVariableNameRequired') }]}
+                                      >
+                                        <Input placeholder={t('qhmiVariableName')} />
+                                      </Form.Item>
+                                      <Button
+                                        type="primary"
+                                        danger
+                                        icon={<DeleteOutlined />}
+                                        onClick={() => removeQhmi(qhmiName)}
+                                      />
+                                    </div>
+                                  ))}
+                                  <Button type="dashed" onClick={() => addQhmi()} block style={{ marginBottom: '10px' }}>
+                                    {t('addQhmiVariable')}
+                                  </Button>
+                                </>
+                              )}
+                            </Form.List>
+                            <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                          </div>
+                        ))}
+                        <Button type="dashed" onClick={() => add()} block>
+                          {t('addAction')}
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                    <Button type="default" icon={<CopyOutlined />} onClick={duplicateItem}>
+                      {t('duplicate')}
                     </Button>
-                  </>
-                )}
-              </Form.List>
-              <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-              <Form.List name="actions">
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map(({ key, name, ...restField }) => (
-                      <div key={key} style={{ marginBottom: '20px', border: '1px solid #434343', padding: '10px' }}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'actionName']}
-                          label={t('actionName')}
-                          rules={[{ required: true, message: t('actionNameRequired') }]}
-                        >
-                          <Input placeholder={t('actionName')} />
-                        </Form.Item>
-                        <Form.List name={[name, 'qhmiNames']}>
-                          {(qhmiFields, { add: addQhmi, remove: removeQhmi }) => (
-                            <>
-                              {qhmiFields.map(({ key: qhmiKey, name: qhmiName, ...qhmiRestField }) => (
-                                <div key={qhmiKey} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                  <Form.Item
-                                    {...qhmiRestField}
-                                    name={[qhmiName]}
-                                    rules={[{ required: true, message: t('qhmiVariableNameRequired') }]}
-                                  >
-                                    <Input placeholder={t('qhmiVariableName')} />
-                                  </Form.Item>
-                                  <Button
-                                    type="primary"
-                                    danger
-                                    icon={<DeleteOutlined />}
-                                    onClick={() => removeQhmi(qhmiName)}
-                                  />
-                                </div>
-                              ))}
-                              <Button type="dashed" onClick={() => addQhmi()} block style={{ marginBottom: '10px' }}>
-                                {t('addQhmiVariable')}
-                              </Button>
-                            </>
-                          )}
-                        </Form.List>
-                        <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                      </div>
-                    ))}
-                    <Button type="dashed" onClick={() => add()} block>
-                      {t('addAction')}
+                    <Button type="primary" danger icon={<DeleteOutlined />} onClick={deleteItem}>
+                      {t('deleteItem')}
                     </Button>
-                  </>
-                )}
-              </Form.List>
-              <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <Button type="default" icon={<CopyOutlined />} onClick={duplicateItem}>
-                  {t('duplicate')}
-                </Button>
-                <Button type="primary" danger icon={<DeleteOutlined />} onClick={deleteItem}>
-                  {t('deleteItem')}
-                </Button>
-                <Button type="primary" htmlType="submit">
-                  {t('save')}
-                </Button>
-              </div>
-            </Form>
-          ) : (
-            <p>{t('selectMenuItemToEdit')}</p>
-          )}
-        </div>
-      </div>
+                    <Button type="primary" htmlType="submit">
+                      {t('save')}
+                    </Button>
+                  </div>
+                </Form>
+              ) : (
+                <p>{t('selectMenuItemToEdit')}</p>
+              )}
+            </div>
+          </div>
+        </TabPane>
+
+        {/* Tab für Logging-Einstellungen */}
+        <TabPane tab={t('Logging Settings')} key="2">
+          <Form
+            layout="inline"
+            onFinish={handleAddLoggingSetting}
+            style={{ marginBottom: '20px', backgroundColor: '#1f1f1f', padding: '16px', borderRadius: '4px' }}
+          >
+            <Form.Item>
+              <Input
+                placeholder={t('New Topic')}
+                value={newTopic}
+                onChange={(e) => setNewTopic(e.target.value)}
+                style={{ width: '300px', backgroundColor: '#333', color: '#fff', border: '1px solid #434343' }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="primary"
+                htmlType="submit"
+                style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
+              >
+                {t('Add')}
+              </Button>
+            </Form.Item>
+          </Form>
+          <Table
+            dataSource={loggingSettings}
+            columns={loggingColumns}
+            rowKey="topic"
+            pagination={false}
+            scroll={{ y: '50vh' }}
+            style={{ backgroundColor: '#1f1f1f', color: '#fff' }}
+          />
+        </TabPane>
+      </Tabs>
     </Modal>
   );
 };

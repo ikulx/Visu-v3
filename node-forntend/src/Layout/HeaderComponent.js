@@ -1,4 +1,3 @@
-// src/HeaderComponent.js
 import React, { useState } from 'react';
 import { Menu, Grid, Drawer, Button, Modal, Radio } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -37,7 +36,7 @@ const HeaderComponent = ({ menuItems }) => {
   const validUsers = pinMapping;
 
   const createMenuItem = (item) => {
-    if (item.sub && Array.isArray(item.sub) && item.sub.length > 0) { // Nur wenn sub nicht leer ist
+    if (item.sub && Array.isArray(item.sub) && item.sub.length > 0) {
       const enabledChildren = item.sub.filter(
         (child) => !child.hasOwnProperty('enable') || child.enable === "true" || child.enable === true
       );

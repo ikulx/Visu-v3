@@ -1,4 +1,4 @@
-// mqttHandler.js
+// src/mqttHandler.js
 const mqtt = require('mqtt');
 
 async function fetchMenuRawFromDB(sqliteDB) {
@@ -60,6 +60,7 @@ async function fetchMenuRawFromDB(sqliteDB) {
 
 let cachedMenuData = null;
 let fetchMenuForFrontendFn = null;
+let messageCallback = null; // Callback für externe Module
 
 function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
   fetchMenuForFrontendFn = fetchMenuForFrontend;
@@ -128,6 +129,11 @@ function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
         if (!foundMatch) {
           console.warn(`Kein Treffer für topic '${itemTopic}' in cachedMenuData`);
         }
+
+        // Nachricht an Callback weiterleiten
+        if (messageCallback) {
+          messageCallback(itemTopic, value);
+        }
       }
 
       if (Object.keys(updates).length > 0) {
@@ -171,7 +177,12 @@ function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
     console.log('Versuche, erneut mit MQTT-Broker zu verbinden...');
   });
 
-  return mqttClient;
+  return {
+    mqttClient,
+    onMessage: (callback) => {
+      messageCallback = callback; // Callback für externe Module registrieren
+    }
+  };
 }
 
 async function updateCachedMenuData(sqliteDB) {
@@ -185,14 +196,12 @@ async function updateCachedMenuData(sqliteDB) {
 
 async function checkAndSendMqttUpdates(io, sqliteDB) {
   try {
-    // Menüstruktur mit dynamischen Labels laden (Sichtbarkeit berücksichtigt)
     const currentMenu = await fetchMenuForFrontendFn(sqliteDB);
     if (!currentMenu || !currentMenu.menuItems) {
       console.warn('Keine Menüdaten verfügbar für MQTT-Überprüfung.');
       return;
     }
     const updates = {};
-    // Alle MQTT-Property-Keys aus dem gecachten Menü sammeln
     const dynamicKeys = new Set();
     const collectDynamicKeys = (items) => {
       for (const item of items) {
@@ -210,17 +219,15 @@ async function checkAndSendMqttUpdates(io, sqliteDB) {
     if (cachedMenuData?.menuItems) {
       collectDynamicKeys(cachedMenuData.menuItems);
     }
-    // Werte aller MQTT-Properties für sichtbare Menüpunkte sammeln
     const collectUpdates = (items) => {
       for (const item of items) {
         if (!item) continue;
         if (item.enable !== true) {
-          continue; // überspringe ausgeblendete/disabled Menüpunkte
+          continue;
         }
         for (const [propKey, propValue] of Object.entries(item.properties || {})) {
           const fullKey = `${item.link}.${propKey}`;
           if (dynamicKeys.has(fullKey)) {
-            // nur Properties senden, die ursprünglich von MQTT stammen
             let sendValue;
             if (propValue && typeof propValue === 'object' && 'value' in propValue) {
               sendValue = propValue.value;

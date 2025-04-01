@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const dbRoutes = require('./dbRoutes');
+const { setupLogging } = require('./loggingHandler');
 const { setupMqtt, updateCachedMenuData } = require('./mqttHandler');
 const {
   fetchMenuForFrontend,
@@ -85,6 +86,16 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
       "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
       FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
     )
+    `);
+    sqliteDB.run(`
+      CREATE TABLE IF NOT EXISTS "logging_settings" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "topic" VARCHAR UNIQUE,              -- MQTT-Topic, das aufgezeichnet werden soll
+      "enabled" BOOLEAN DEFAULT 1,         -- Ob die Aufzeichnung aktiv ist
+      "description" TEXT,                  -- Beschreibung des Logs
+      "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+      "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime'))
+  )
     `);
   }
 });
@@ -240,6 +251,38 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Neu: Logging-Einstellungen
+  socket.on('request-logging-settings', () => {
+    sqliteDB.all('SELECT * FROM logging_settings', [], (err, rows) => {
+      if (err) {
+        console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
+        return;
+      }
+      socket.emit('logging-settings-update', rows);
+    });
+  });
+
+  socket.on('update-logging-setting', (data) => {
+    const { topic, enabled } = data;
+    sqliteDB.run(
+      `INSERT OR REPLACE INTO logging_settings (topic, enabled, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
+      [topic, enabled ? 1 : 0],
+      (err) => {
+        if (err) {
+          console.error('Fehler beim Aktualisieren der Logging-Einstellungen:', err);
+          return;
+        }
+        sqliteDB.all('SELECT * FROM logging_settings', [], (err, rows) => {
+          if (err) {
+            console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
+            return;
+          }
+          io.emit('logging-settings-update', rows);
+        });
+      }
+    );
+  });
+
   socket.on('disconnect', () => {
     console.log('Client getrennt:', socket.id);
   });
@@ -247,7 +290,8 @@ io.on('connection', (socket) => {
 
 app.use('/db', dbRoutes);
 
-setupMqtt(io, sqliteDB, fetchMenuForFrontend);
+const mqttHandler = setupMqtt(io, sqliteDB, fetchMenuForFrontend);
+setupLogging(io, sqliteDB, mqttHandler); // mqttHandler wird übergeben
 
 const PORT = 3001;
 server.listen(PORT, () => {
