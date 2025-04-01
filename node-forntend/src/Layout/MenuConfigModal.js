@@ -33,7 +33,15 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const onMenuConfigUpdate = (data) => {
       console.log('Menu config received:', JSON.stringify(data, null, 2));
-      setMenuData(data);
+      setMenuData(data); // Direktes Überschreiben des States
+      if (selectedNode) {
+        // Aktualisiere das Formular, falls ein Knoten ausgewählt ist
+        const updatedNode = findNodeByLinkAndLabel(data.menuItems, selectedNode.link, selectedNode.label);
+        if (updatedNode) {
+          setSelectedNode(updatedNode);
+          updateForm(updatedNode);
+        }
+      }
     };
 
     const onMenuConfigSuccess = (response) => {
@@ -56,7 +64,48 @@ const MenuConfigModal = ({ visible, onClose }) => {
       socket.off('menu-config-success', onMenuConfigSuccess);
       socket.off('menu-config-error', onMenuConfigError);
     };
-  }, [visible, t]);
+  }, [visible, t, selectedNode]);
+
+  // Hilfsfunktion zum Finden eines Knotens
+  const findNodeByLinkAndLabel = (items, link, label) => {
+    for (const item of items) {
+      const itemLabel = typeof item.label === 'object' ? item.label.value : item.label;
+      if (item.link === link && itemLabel === label) {
+        return item;
+      }
+      if (item.sub && item.sub.length > 0) {
+        const found = findNodeByLinkAndLabel(item.sub, link, label);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Hilfsfunktion zum Aktualisieren des Formulars
+  const updateForm = (node) => {
+    const labelField =
+      typeof node.label === 'object'
+        ? node.label
+        : { value: node.label, source_type: 'static', source_key: '' };
+    form.setFieldsValue({
+      label: labelField,
+      link: node.link,
+      svg: node.svg,
+      enable: node.enable === "true" || node.enable === true,
+      qhmiVariable: node.qhmiVariable,
+      svgConditions: node.svgConditions || [],
+      properties: Object.entries(node.properties || {}).map(([key, value]) => ({
+        key,
+        value: typeof value === 'object' ? value.value : value,
+        source_type: typeof value === 'object' ? value.source_type : 'static',
+        source_key: typeof value === 'object' ? value.source_key || '' : ''
+      })),
+      actions: Object.entries(node.actions || {}).map(([actionName, qhmiNames]) => ({
+        actionName,
+        qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames]
+      }))
+    });
+  };
 
   const generateTreeData = (items) => {
     return items.map(item => {
@@ -77,26 +126,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
     if (selectedKeys.length > 0) {
       const node = info.node.itemData;
       setSelectedNode(node);
-      const labelField =
-        typeof node.label === 'object'
-          ? node.label
-          : { value: node.label, source_type: 'static', source_key: '' };
-      form.setFieldsValue({
-        label: labelField,
-        link: node.link,
-        svg: node.svg,
-        enable: node.enable === "true" || node.enable === true,
-        properties: Object.entries(node.properties || {}).map(([key, value]) => ({
-          key,
-          value: typeof value === 'object' ? value.value : value,
-          source_type: typeof value === 'object' ? value.source_type : 'static',
-          source_key: typeof value === 'object' ? value.source_key || '' : ''
-        })),
-        actions: Object.entries(node.actions || {}).map(([actionName, qhmiNames]) => ({
-          actionName,
-          qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames]
-        }))
-      });
+      updateForm(node);
     } else {
       setSelectedNode(null);
       form.resetFields();
@@ -115,24 +145,18 @@ const MenuConfigModal = ({ visible, onClose }) => {
       link: values.link,
       svg: values.svg,
       enable: values.enable,
+      qhmiVariable: values.qhmiVariable,
+      svgConditions: values.svgConditions,
       properties: values.properties.reduce((acc, prop) => {
         if (prop.source_type === 'static') {
-          acc[prop.key] = {
-            value: prop.value,
-            source_type: prop.source_type,
-            source_key: null
-          };
+          acc[prop.key] = { value: prop.value, source_type: prop.source_type, source_key: null };
         } else {
-          acc[prop.key] = {
-            value: null,
-            source_type: prop.source_type,
-            source_key: prop.source_key
-          };
+          acc[prop.key] = { value: null, source_type: prop.source_type, source_key: prop.source_key };
         }
         return acc;
       }, {}),
       actions: values.actions.reduce((acc, action) => {
-        acc[action.actionName] = action.qhmiNames; // Array von qhmi_variable_name
+        acc[action.actionName] = action.qhmiNames;
         return acc;
       }, {})
     };
@@ -163,6 +187,8 @@ const MenuConfigModal = ({ visible, onClose }) => {
       link: '/new-item',
       svg: 'default',
       enable: true,
+      qhmiVariable: null,
+      svgConditions: [],
       properties: {},
       actions: {},
       sub: []
@@ -182,6 +208,8 @@ const MenuConfigModal = ({ visible, onClose }) => {
       link: '/new-submenu',
       svg: 'default',
       enable: true,
+      qhmiVariable: null,
+      svgConditions: [],
       properties: {},
       actions: {},
       sub: []
@@ -361,12 +389,46 @@ const MenuConfigModal = ({ visible, onClose }) => {
               <Form.Item name="link" label={t('link')} rules={[{ required: false }]}>
                 <Input />
               </Form.Item>
-              <Form.Item name="svg" label={t('svg')} rules={[{ required: false }]}>
-                <Input />
+              <Form.Item name="svg" label={t('defaultSvg')} rules={[{ required: false }]}>
+                <Input placeholder="Standard-SVG (Fallback)" />
               </Form.Item>
               <Form.Item name="enable" label={t('enable')} valuePropName="checked">
                 <Switch />
               </Form.Item>
+              <Form.Item name="qhmiVariable" label={t('qhmiVariable')} rules={[{ required: false }]}>
+                <Input placeholder="Name der QhmiVariable" />
+              </Form.Item>
+              <Form.List name="svgConditions">
+                {(fields, { add, remove }) => (
+                  <>
+                    {fields.map(({ key, name, ...restField }) => (
+                      <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'value']}
+                          label={t('conditionValue')}
+                          rules={[{ required: true, message: t('conditionValueRequired') }]}
+                        >
+                          <Input placeholder="Wert" />
+                        </Form.Item>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'svg']}
+                          label={t('svg')}
+                          rules={[{ required: true, message: t('svgRequired') }]}
+                        >
+                          <Input placeholder="SVG-Datei" />
+                        </Form.Item>
+                        <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                      </div>
+                    ))}
+                    <Button type="dashed" onClick={() => add()} block>
+                      {t('addSvgCondition')}
+                    </Button>
+                  </>
+                )}
+              </Form.List>
+              <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
               <Form.List name="properties">
                 {(fields, { add, remove }) => (
                   <>

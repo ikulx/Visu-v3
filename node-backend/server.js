@@ -58,6 +58,7 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
         "value" VARCHAR,
         "source_type" VARCHAR CHECK(source_type IN ('static', 'dynamic', 'mqtt')),
         "source_key" VARCHAR,
+        "qhmiVariable" VARCHAR,
         "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
         "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
         FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
@@ -73,6 +74,17 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
         "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
         FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
       )
+    `);
+    sqliteDB.run(`
+      CREATE TABLE IF NOT EXISTS "menu_svg_conditions" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "menu_item_id" INTEGER,
+      "value" VARCHAR,
+      "svg" VARCHAR,
+      "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+      "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+      FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
+    )
     `);
   }
 });

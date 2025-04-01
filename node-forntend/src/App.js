@@ -109,7 +109,7 @@ function App() {
   }, [flatMenuItems]);
 
   // Debugging: Prüfe die Struktur von flatMenuItems
-  console.log('FlatMenuItems:', JSON.stringify(flatMenuItems, null, 2));
+  //console.log('FlatMenuItems:', JSON.stringify(flatMenuItems, null, 2));
 
   return (
     <Router>

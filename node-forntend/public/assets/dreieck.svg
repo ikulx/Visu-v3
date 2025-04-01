@@ -1,3 +1,78 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <polygon points="100,20 20,180 180,180" fill="currentColor"/>
+  <ycontrol>
+    <property name="Status Venti" datatype="Int8" defaultvalue="99">
+      <target type="Style" element="venticolorfill" selector="fill">
+        <condition eq="99" output="#f542ef" />
+        <condition eq="0" output="black" />
+        <condition eq="1" output="green" />
+        <condition eq="2" output="red" />
+        <condition eq="10" output="black" />
+        <condition eq="11" output="green" />
+        <condition eq="12" output="red" />
+        <condition eq="20" output="black" />
+        <condition eq="21" output="green" />
+        <condition eq="22" output="red" />
+      </target>
+      <target type="Style" element="venticolorfill" selector="stroke">
+        <condition eq="99" output="#18c6c9" />
+        <condition lt="10" output="white" />
+        <condition lt="20" output="blue" />
+        <condition lt="30" output="orange" />
+      </target>
+            <target type="Style" element="venticolorstroke" selector="fill">
+        <condition eq="99" output="#18c6c9" />
+        <condition lt="10" output="white" />
+        <condition lt="20" output="blue" />
+        <condition lt="30" output="orange" />
+      </target>
+      <!-- Optional: Ziel zur dynamischen Steuerung des Textes -->
+
+	        <target type="Content" element="myText">
+       			<condition eq="0" output="Auto Aus" />
+        	  <condition eq="1" output="Ein Heizen" />
+       			<condition eq="2" output="Ein BWW" />
+        	  <condition eq="3" output="Ein Kühlen" />
+       			<condition eq="4" output="Störung!" /> 
+       			<condition eq="5" output="Qittieren" />
+       			<condition eq="6" output="Frostschutz" />
+       			<condition eq="7" output="EVU-Sperre" />
+       			<condition eq="8" output="Freecoling und Heizen" />
+       			<condition eq="10" output="Hand Aus" />
+       			<condition eq="90" output="Abtauung" />
+            <condition eq="99" output="Unbekannt" />
+       			<condition eq="100" output="EVU-Sperre" />
+       		</target> 
+    </property>
+
+        <property name="Status Venti" datatype="Int8" defaultvalue="99">
+            <target type="Style" element="venticolorstroke" selector="fill">
+        <condition eq="99" output="#18c6c9" />
+        <condition lt="10" output="white" />
+        <condition lt="20" output="blue" />
+        <condition lt="30" output="orange" />
+      </target>
+      <!-- Optional: Ziel zur dynamischen Steuerung des Textes -->
+
+	        <target type="Content" element="myText">
+       			<condition eq="0" output="Auto Aus" />
+        	  <condition eq="1" output="Ein Heizen" />
+       			<condition eq="2" output="Ein BWW" />
+        	  <condition eq="3" output="Ein Kühlen" />
+       			<condition eq="4" output="Störung!" /> 
+       			<condition eq="5" output="Qittieren" />
+       			<condition eq="6" output="Frostschutz" />
+       			<condition eq="7" output="EVU-Sperre" />
+       			<condition eq="8" output="Freecoling und Heizen" />
+       			<condition eq="10" output="Hand Aus" />
+       			<condition eq="90" output="Abtauung" />
+            <condition eq="99" output="Unbekannt" />
+       			<condition eq="100" output="EVU-Sperre" />
+       		</target> 
+    </property>
+
+    <action name="Click" triggers="click" element="venticolorfill" />
+
+    
+  </ycontrol>
+  <polygon class="venticolorfill" points="100,20 20,180 180,180" fill="currentColor"/>
 </svg>

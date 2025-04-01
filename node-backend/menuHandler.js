@@ -18,6 +18,27 @@ const defaultMenu = {
   ]
 };
 
+// Funktion zum Abrufen der QHMI-Variablen aus der Datenbank
+async function fetchQhmiVariables(sqliteDB) {
+  return new Promise((resolve, reject) => {
+    sqliteDB.all(
+      `SELECT NAME, VAR_VALUE FROM QHMI_VARIABLES`,
+      [],
+      (err, rows) => {
+        if (err) {
+          console.error("Fehler beim Abrufen der QHMI-Variablen:", err);
+          return reject(err);
+        }
+        const variables = {};
+        rows.forEach(row => {
+          variables[row.NAME] = row.VAR_VALUE;
+        });
+        resolve(variables);
+      }
+    );
+  });
+}
+
 // Funktion zum Auflösen dynamischer Properties (wie bisher)
 async function resolvePropertyValue(sqliteDB, property) {
   if (property.source_type === 'static') {
@@ -65,12 +86,14 @@ async function fetchMenuRawFromDB(sqliteDB) {
     sqliteDB.all(
       `
       SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key,
-             ma.id AS action_id, ma.action_name, ma.qhmi_variable_name
+             ma.id AS action_id, ma.action_name, ma.qhmi_variable_name,
+             msc.id AS condition_id, msc.value, msc.svg AS condition_svg
       FROM menu_items mi
       LEFT JOIN menu_properties mp ON mi.id = mp.menu_item_id
       LEFT JOIN menu_actions ma ON mi.id = ma.menu_item_id
+      LEFT JOIN menu_svg_conditions msc ON mi.id = msc.menu_item_id
       ORDER BY mi.sort_order ASC
-    `,
+      `,
       [],
       (err, rows) => {
         if (err) {
@@ -82,25 +105,22 @@ async function fetchMenuRawFromDB(sqliteDB) {
         const itemMap = new Map();
 
         rows.forEach((row) => {
-          let parsedLabel;
-          try {
-            parsedLabel = JSON.parse(row.label);
-          } catch (e) {
-            parsedLabel = row.label;
-          }
-
           if (!itemMap.has(row.id)) {
             itemMap.set(row.id, {
               link: row.link,
-              label: parsedLabel,
+              label: JSON.parse(row.label) || row.label,
               svg: row.svg,
               enable: row.enable === 1,
+              qhmiVariable: row.qhmiVariable,
+              svgConditions: [],
               properties: {},
               actions: {},
               sub: row.parent_id ? undefined : []
             });
           }
           const item = itemMap.get(row.id);
+
+          // Properties hinzufügen (überschreibt Duplikate durch Schlüssel)
           if (row.key) {
             item.properties[row.key] = {
               value: row.value,
@@ -108,11 +128,25 @@ async function fetchMenuRawFromDB(sqliteDB) {
               source_key: row.source_key
             };
           }
+
+          // Actions hinzufügen (vermeide Duplikate durch Überprüfung)
           if (row.action_name && row.qhmi_variable_name) {
             if (!item.actions[row.action_name]) {
               item.actions[row.action_name] = [];
             }
-            item.actions[row.action_name].push(row.qhmi_variable_name);
+            if (!item.actions[row.action_name].includes(row.qhmi_variable_name)) {
+              item.actions[row.action_name].push(row.qhmi_variable_name);
+            }
+          }
+
+          // SVG Conditions hinzufügen (vermeide Duplikate durch Überprüfung)
+          if (row.value && row.condition_svg) {
+            const conditionExists = item.svgConditions.some(
+              cond => cond.value === row.value && cond.svg === row.condition_svg
+            );
+            if (!conditionExists) {
+              item.svgConditions.push({ value: row.value, svg: row.condition_svg });
+            }
           }
         });
 
@@ -131,7 +165,6 @@ async function fetchMenuRawFromDB(sqliteDB) {
   });
 }
 
-
 // Rekursive Funktion zum Auflösen dynamischer Labels und Properties in der Menüstruktur
 async function resolveLabelsInMenu(sqliteDB, items) {
   return Promise.all(
@@ -139,11 +172,8 @@ async function resolveLabelsInMenu(sqliteDB, items) {
       let resolvedLabel = item.label;
       let resolvedEnable = item.enable;
 
-      // Prüfen, ob das Label ein Objekt ist und dynamisch aufgelöst werden muss
       if (typeof item.label === 'object' && item.label.source_type === 'dynamic') {
         resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
-
-        // Zusätzlich das 'visible'-Feld aus QHMI_VARIABLES abrufen und 'enable' setzen
         resolvedEnable = await new Promise((resolve) => {
           sqliteDB.get(
             `SELECT visible FROM QHMI_VARIABLES WHERE NAME = ?`,
@@ -151,9 +181,8 @@ async function resolveLabelsInMenu(sqliteDB, items) {
             (err, row) => {
               if (err || !row) {
                 console.error(`Fehler beim Abrufen von visible für ${item.label.source_key}:`, err);
-                resolve(item.enable); // Fallback auf ursprünglichen Wert
+                resolve(item.enable);
               } else {
-                // Konvertiere 'visible' (VARCHAR) zu einem Boolean-Wert für 'enable'
                 resolve(row.visible === '1' || row.visible === 'true');
               }
             }
@@ -163,13 +192,11 @@ async function resolveLabelsInMenu(sqliteDB, items) {
         resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
       }
 
-      // Untermenüs rekursiv auflösen
       let resolvedSub = [];
       if (item.sub && item.sub.length > 0) {
         resolvedSub = await resolveLabelsInMenu(sqliteDB, item.sub);
       }
 
-      // Properties auflösen
       const properties = {};
       for (const [key, prop] of Object.entries(item.properties)) {
         properties[key] = await resolvePropertyValue(sqliteDB, prop);
@@ -178,7 +205,7 @@ async function resolveLabelsInMenu(sqliteDB, items) {
       return {
         ...item,
         label: resolvedLabel,
-        enable: resolvedEnable, // Aktualisiertes enable-Feld
+        enable: resolvedEnable,
         properties,
         sub: resolvedSub
       };
@@ -186,9 +213,26 @@ async function resolveLabelsInMenu(sqliteDB, items) {
   );
 }
 
-// Menü für das Frontend vorbereiten – hier werden die dynamischen Labels und Properties neu aus QHMI_VARIABLES gelesen.
+// Menü für das Frontend vorbereiten
 async function fetchMenuForFrontend(sqliteDB) {
   const rawMenu = await fetchMenuRawFromDB(sqliteDB);
+  const qhmiVariables = await fetchQhmiVariables(sqliteDB);
+
+  const resolveSvg = (item) => {
+    if (item.qhmiVariable) {
+      const variableValue = qhmiVariables[item.qhmiVariable];
+      const condition = item.svgConditions.find(cond => cond.value === variableValue);
+      if (condition) {
+        item.svg = condition.svg;
+      }
+    }
+    if (item.sub) {
+      item.sub.forEach(subItem => resolveSvg(subItem));
+    }
+  };
+
+  rawMenu.menuItems.forEach(item => resolveSvg(item));
+
   const menuItems = await resolveLabelsInMenu(sqliteDB, rawMenu.menuItems);
   return { menuItems };
 }
@@ -201,8 +245,9 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
     const labelValue = typeof item.label === 'object' ? JSON.stringify(item.label) : item.label;
     const itemId = await new Promise((resolve, reject) => {
       sqliteDB.run(
-        `INSERT INTO menu_items (label, link, svg, enable, parent_id, sort_order) VALUES (?, ?, ?, ?, ?, ?)`,
-        [labelValue, item.link, item.svg, item.enable ? 1 : 0, parentId, sortOrder],
+        `INSERT INTO menu_items (label, link, svg, enable, parent_id, sort_order, qhmiVariable) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [labelValue, item.link, item.svg, item.enable ? 1 : 0, parentId, sortOrder, item.qhmiVariable || null],
         function (err) {
           if (err) reject(err);
           else resolve(this.lastID);
@@ -213,14 +258,11 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
     if (item.properties) {
       for (const [key, propData] of Object.entries(item.properties)) {
         const { value, source_type, source_key } =
-          typeof propData === 'object' && propData !== null
-            ? propData
-            : { value: propData, source_type: 'static', source_key: null };
-        const insertValue = source_type === 'static' ? value : null;
-
+          typeof propData === 'object' ? propData : { value: propData, source_type: 'static', source_key: null };
         await sqliteDB.run(
-          `INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) VALUES (?, ?, ?, ?, ?)`,
-          [itemId, key, insertValue, source_type || 'static', source_key || null]
+          `INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [itemId, key, value, source_type || 'static', source_key || null]
         );
       }
     }
@@ -229,10 +271,20 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
       for (const [actionName, qhmiVariableNames] of Object.entries(item.actions)) {
         for (const qhmiVariableName of qhmiVariableNames) {
           await sqliteDB.run(
-            `INSERT INTO menu_actions (menu_item_id, action_name, qhmi_variable_name) VALUES (?, ?, ?)`,
+            `INSERT INTO menu_actions (menu_item_id, action_name, qhmi_variable_name) 
+             VALUES (?, ?, ?)`,
             [itemId, actionName, qhmiVariableName]
           );
         }
+      }
+    }
+
+    if (item.svgConditions) {
+      for (const condition of item.svgConditions) {
+        await sqliteDB.run(
+          `INSERT INTO menu_svg_conditions (menu_item_id, value, svg) VALUES (?, ?, ?)`,
+          [itemId, condition.value, condition.svg]
+        );
       }
     }
 
@@ -243,9 +295,8 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
 }
 
 // Menü-Update-Handler für Socket.IO
-function setupMenuHandlers(io, sqliteDB, updateCachedMenuData, fetchMenuForFrontend) {
+function setupMenuHandlers(io, sqliteDB, updateCachedMenuData) {
   let currentMenu;
-  // Initiales Laden des Menüs (dynamische Werte werden hier noch nicht zwingend benötigt)
   (async () => {
     try {
       currentMenu = await fetchMenuForFrontend(sqliteDB);
@@ -257,16 +308,19 @@ function setupMenuHandlers(io, sqliteDB, updateCachedMenuData, fetchMenuForFront
   })();
 
   io.on('connection', async (socket) => {
-    // Vor dem Senden des Menüs an den Client werden die dynamischen Labels und Properties neu aus der QHMI_VARIABLES gelesen.
+    console.log('Neuer Client verbunden:', socket.id);
     currentMenu = await fetchMenuForFrontend(sqliteDB);
     socket.emit('menu-update', currentMenu);
 
     socket.on('update-menu-config', async (newMenu) => {
       try {
+        // Lösche alle bestehenden Einträge aus den Tabellen
         await new Promise((resolve, reject) => {
-          sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => {
-            if (err) reject(err);
-            sqliteDB.run(`DELETE FROM menu_items`, [], (err) => (err ? reject(err) : resolve()));
+          sqliteDB.serialize(() => {
+            sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => err && reject(err));
+            sqliteDB.run(`DELETE FROM menu_actions`, [], (err) => err && reject(err));
+            sqliteDB.run(`DELETE FROM menu_svg_conditions`, [], (err) => err && reject(err));
+            sqliteDB.run(`DELETE FROM menu_items`, [], (err) => err ? reject(err) : resolve());
           });
         });
 
@@ -304,10 +358,13 @@ function setupMenuHandlers(io, sqliteDB, updateCachedMenuData, fetchMenuForFront
 async function updateMenuHandler(req, res, sqliteDB, fetchMenuForFrontend) {
   const newMenu = req.body;
   try {
+    // Lösche alle bestehenden Einträge aus den Tabellen
     await new Promise((resolve, reject) => {
-      sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => {
-        if (err) reject(err);
-        sqliteDB.run(`DELETE FROM menu_items`, [], (err) => (err ? reject(err) : resolve()));
+      sqliteDB.serialize(() => {
+        sqliteDB.run(`DELETE FROM menu_properties`, [], (err) => err && reject(err));
+        sqliteDB.run(`DELETE FROM menu_actions`, [], (err) => err && reject(err));
+        sqliteDB.run(`DELETE FROM menu_svg_conditions`, [], (err) => err && reject(err));
+        sqliteDB.run(`DELETE FROM menu_items`, [], (err) => err ? reject(err) : resolve());
       });
     });
 
