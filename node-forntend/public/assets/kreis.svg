@@ -1,5 +1,4 @@
 
-<!-- <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"> -->
 <svg width="262" height="122" viewBox="0 0 262 122" fill="none" xmlns="http://www.w3.org/2000/svg">
   <ycontrol>
     <property name="Status Venti" datatype="Int8" defaultvalue="99">
@@ -71,14 +70,10 @@
        			<condition eq="100" output="EVU-Sperre" />
        		</target> 
     </property>
+
+    <action name="Click" triggers="click" element="venticolorfill" />
   </ycontrol>
   
-  <!-- Kreis, der die Klasse venticolorfill verwendet -->
-  <!-- <circle class="venticolorfill" cx="100" cy="100" r="80" stroke="#7A1717" stroke-width="3" fill="black"/> -->
-  
-  <!-- Text-Element, das die Klasse myText verwendet -->
-  <!-- <text x="100" y="80" class="myText" font-size="20" text-anchor="middle">Beispieltext</text> -->
-<!-- </svg> -->
 
 
 

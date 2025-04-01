@@ -1,4 +1,3 @@
-// src/App.js
 import React, { Suspense, useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Spin, Modal } from 'antd';
@@ -109,7 +108,8 @@ function App() {
     return Array.from(new Set(svgNames));
   }, [flatMenuItems]);
 
-  // console.log('Stabilized MenuItems passed to MainLayout:', JSON.stringify(stabilizedMenuItems, null, 2));
+  // Debugging: Prüfe die Struktur von flatMenuItems
+  console.log('FlatMenuItems:', JSON.stringify(flatMenuItems, null, 2));
 
   return (
     <Router>
@@ -126,7 +126,7 @@ function App() {
               <Route
                 key={item.link}
                 path={item.link}
-                element={<LazyPage svg={item.svg} properties={item.properties} allSvgs={allSvgs} />}
+                element={<LazyPage svg={item.svg} properties={item} allSvgs={allSvgs} />}
               />
             ))}
             <Route path="/settings" element={<LazySettingsPage />} />

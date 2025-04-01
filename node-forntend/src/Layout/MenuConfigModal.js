@@ -1,4 +1,3 @@
-// src/MenuConfigModal.js
 import React, { useState, useEffect } from 'react';
 import {
   Modal,
@@ -59,7 +58,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     };
   }, [visible, t]);
 
-  // Generiere Baumdaten. Falls label ein Objekt ist, wird der value genutzt.
   const generateTreeData = (items) => {
     return items.map(item => {
       const labelText =
@@ -75,12 +73,10 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
   const treeData = generateTreeData(menuData.menuItems);
 
-  // Beim Auswählen eines Knotens: Formular mit den Werten füllen
   const onSelect = (selectedKeys, info) => {
     if (selectedKeys.length > 0) {
       const node = info.node.itemData;
       setSelectedNode(node);
-      // Falls label als Objekt gespeichert ist, direkt verwenden; ansonsten umwandeln
       const labelField =
         typeof node.label === 'object'
           ? node.label
@@ -92,10 +88,13 @@ const MenuConfigModal = ({ visible, onClose }) => {
         enable: node.enable === "true" || node.enable === true,
         properties: Object.entries(node.properties || {}).map(([key, value]) => ({
           key,
-          // Bei statischen Properties wird value genutzt, sonst source_key
           value: typeof value === 'object' ? value.value : value,
           source_type: typeof value === 'object' ? value.source_type : 'static',
           source_key: typeof value === 'object' ? value.source_key || '' : ''
+        })),
+        actions: Object.entries(node.actions || {}).map(([actionName, qhmiNames]) => ({
+          actionName,
+          qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames]
         }))
       });
     } else {
@@ -104,7 +103,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     }
   };
 
-  // Speichern der Änderungen am ausgewählten Menüpunkt
   const onFinish = (values) => {
     if (!selectedNode) {
       message.error(t('selectMenuItem'));
@@ -113,7 +111,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const updatedNode = {
       ...selectedNode,
-      // Label als Objekt übernehmen
       label: values.label,
       link: values.link,
       svg: values.svg,
@@ -132,6 +129,10 @@ const MenuConfigModal = ({ visible, onClose }) => {
             source_key: prop.source_key
           };
         }
+        return acc;
+      }, {}),
+      actions: values.actions.reduce((acc, action) => {
+        acc[action.actionName] = action.qhmiNames; // Array von qhmi_variable_name
         return acc;
       }, {})
     };
@@ -156,7 +157,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     socket.emit('update-menu-config', updatedMenu);
   };
 
-  // Fügt einen neuen Top-Level-Menüpunkt hinzu; Label wird als Objekt initialisiert.
   const addNewItem = () => {
     const newItem = {
       label: { value: 'New Item', source_type: 'static', source_key: '' },
@@ -164,6 +164,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
       svg: 'default',
       enable: true,
       properties: {},
+      actions: {},
       sub: []
     };
     const updatedMenu = { menuItems: [...menuData.menuItems, newItem] };
@@ -171,7 +172,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     socket.emit('update-menu-config', updatedMenu);
   };
 
-  // Fügt ein neues Untermenü zum aktuell ausgewählten Menüpunkt hinzu.
   const addSubMenu = () => {
     if (!selectedNode) {
       message.error(t('selectMenuItem'));
@@ -183,6 +183,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
       svg: 'default',
       enable: true,
       properties: {},
+      actions: {},
       sub: []
     };
 
@@ -207,7 +208,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     socket.emit('update-menu-config', updatedMenu);
   };
 
-  // Dupliziert den aktuell ausgewählten Menüpunkt inkl. Untermenüs
   const duplicateItem = () => {
     if (!selectedNode) {
       message.error(t('selectMenuItem'));
@@ -216,7 +216,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const duplicateMenuItem = (item) => {
       const newItem = JSON.parse(JSON.stringify(item));
-      // Label kopieren und " Copy" anhängen
       if (typeof newItem.label === 'object') {
         newItem.label.value = newItem.label.value + ' Copy';
       } else {
@@ -253,7 +252,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
     message.success(t('menuDuplicated'));
   };
 
-  // Löscht den ausgewählten Menüpunkt
   const deleteItem = () => {
     if (!selectedNode) {
       message.error(t('selectMenuItem'));
@@ -292,12 +290,12 @@ const MenuConfigModal = ({ visible, onClose }) => {
       width={900}
       centered
       style={{ top: 20 }}
-      styles={{ body: {backgroundColor: '#141414', color: '#fff', padding: '20px' }}}
+      styles={{ body: { backgroundColor: '#141414', color: '#fff', padding: '20px' } }}
     >
       <div style={{ display: 'flex', gap: '20px' }}>
         <div style={{ flex: 1 }}>
           <div style={{ marginBottom: '10px', display: 'flex', gap: '10px' }}>
-            <Button  icon={<PlusOutlined />} onClick={addNewItem}>
+            <Button icon={<PlusOutlined />} onClick={addNewItem}>
               {t('addItem')}
             </Button>
             <Button
@@ -320,7 +318,6 @@ const MenuConfigModal = ({ visible, onClose }) => {
         <div style={{ flex: 1 }}>
           {selectedNode ? (
             <Form form={form} layout="vertical" onFinish={onFinish} style={{ color: '#fff' }}>
-              {/* Label-Gruppe mit dynamischer Auswahl */}
               <Form.Item label={t('label')}>
                 <Form.Item
                   name={['label', 'source_type']}
@@ -419,6 +416,55 @@ const MenuConfigModal = ({ visible, onClose }) => {
                     })}
                     <Button type="dashed" onClick={() => add()} block>
                       {t('addProperty')}
+                    </Button>
+                  </>
+                )}
+              </Form.List>
+              <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
+              <Form.List name="actions">
+                {(fields, { add, remove }) => (
+                  <>
+                    {fields.map(({ key, name, ...restField }) => (
+                      <div key={key} style={{ marginBottom: '20px', border: '1px solid #434343', padding: '10px' }}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'actionName']}
+                          label={t('actionName')}
+                          rules={[{ required: true, message: t('actionNameRequired') }]}
+                        >
+                          <Input placeholder={t('actionName')} />
+                        </Form.Item>
+                        <Form.List name={[name, 'qhmiNames']}>
+                          {(qhmiFields, { add: addQhmi, remove: removeQhmi }) => (
+                            <>
+                              {qhmiFields.map(({ key: qhmiKey, name: qhmiName, ...qhmiRestField }) => (
+                                <div key={qhmiKey} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                                  <Form.Item
+                                    {...qhmiRestField}
+                                    name={[qhmiName]}
+                                    rules={[{ required: true, message: t('qhmiVariableNameRequired') }]}
+                                  >
+                                    <Input placeholder={t('qhmiVariableName')} />
+                                  </Form.Item>
+                                  <Button
+                                    type="primary"
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => removeQhmi(qhmiName)}
+                                  />
+                                </div>
+                              ))}
+                              <Button type="dashed" onClick={() => addQhmi()} block style={{ marginBottom: '10px' }}>
+                                {t('addQhmiVariable')}
+                              </Button>
+                            </>
+                          )}
+                        </Form.List>
+                        <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                      </div>
+                    ))}
+                    <Button type="dashed" onClick={() => add()} block>
+                      {t('addAction')}
                     </Button>
                   </>
                 )}

@@ -1,4 +1,3 @@
-// src/EditVariableModal.js
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal, Input, Select, InputNumber, Grid, Button, Checkbox } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
@@ -9,144 +8,172 @@ import NumericKeypad from './NumericKeypad';
 import { useUser } from './UserContext';
 import pinMapping from './pinMapping.json';
 
-const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
+const EditVariableModal = ({ visible, record, records, onCancel, onUpdateSuccess }) => {
   const { i18n } = useTranslation();
   const { xs } = Grid.useBreakpoint();
   const currentLang = i18n.language || 'en';
-  const [value, setValue] = useState(record ? record.VAR_VALUE : '');
+  const [values, setValues] = useState({});
   const { loggedInUser } = useUser();
 
   const [keyboardMode, setKeyboardMode] = useState('letters');
   const [isUppercase, setIsUppercase] = useState(true);
-  const inputRef = useRef(null);
+  const inputRefs = useRef({});
 
-  // State for user assignment modal
   const [userModalVisible, setUserModalVisible] = useState(false);
-  const [selectedUsers, setSelectedUsers] = useState([]);
-  const [minValue, setMinValue] = useState(record ? record.MIN : '');
-  const [maxValue, setMaxValue] = useState(record ? record.MAX : '');
+  const [selectedUsers, setSelectedUsers] = useState({});
+  const [minValues, setMinValues] = useState({});
+  const [maxValues, setMaxValues] = useState({});
 
-  const isNativeKeyboardAvailable = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-  useEffect(() => {
-    if (record) {
-      setValue(record.VAR_VALUE);
-      setSelectedUsers(record.benutzer ? record.benutzer.split(',').map(u => u.trim()) : []);
-      setMinValue(record.MIN);
-      setMaxValue(record.MAX);
-    }
-  }, [record]);
+  // Normalisiere records: Wenn nur record übergeben wird, mache daraus ein Array
+  const normalizedRecords = records || (record ? [record] : []);
 
   useEffect(() => {
-    if (visible && inputRef.current) {
-      inputRef.current.focus();
+    if (normalizedRecords.length > 0) {
+      const initialValues = {};
+      const initialUsers = {};
+      const initialMin = {};
+      const initialMax = {};
+      normalizedRecords.forEach(rec => {
+        initialValues[rec.NAME] = rec.VAR_VALUE;
+        initialUsers[rec.NAME] = rec.benutzer ? rec.benutzer.split(',').map(u => u.trim()) : [];
+        initialMin[rec.NAME] = rec.MIN;
+        initialMax[rec.NAME] = rec.MAX;
+      });
+      setValues(initialValues);
+      setSelectedUsers(initialUsers);
+      setMinValues(initialMin);
+      setMaxValues(initialMax);
     }
-  }, [visible]);
+  }, [normalizedRecords]);
 
-  const getOptions = () => {
+  useEffect(() => {
+    if (visible && normalizedRecords.length > 0) {
+      normalizedRecords.forEach(rec => {
+        if (inputRefs.current[rec.NAME]) {
+          inputRefs.current[rec.NAME].focus();
+        }
+      });
+    }
+  }, [visible, normalizedRecords]);
+
+  // Funktion zur Bestimmung des Labels basierend auf der aktuellen Sprache
+  const getLabel = (rec) => {
+    switch (currentLang) {
+      case 'de':
+        return rec.NAME_de && rec.NAME_de.trim() ? rec.NAME_de : rec.NAME;
+      case 'fr':
+        return rec.NAME_fr && rec.NAME_fr.trim() ? rec.NAME_fr : (rec.NAME_de && rec.NAME_de.trim() ? rec.NAME_de : rec.NAME);
+      case 'it':
+        return rec.NAME_it && rec.NAME_it.trim() ? rec.NAME_it : (rec.NAME_de && rec.NAME_de.trim() ? rec.NAME_de : rec.NAME);
+      case 'en':
+        return rec.NAME_en && rec.NAME_en.trim() ? rec.NAME_en : (rec.NAME_de && rec.NAME_de.trim() ? rec.NAME_de : rec.NAME);
+      default:
+        return rec.NAME_de && rec.NAME_de.trim() ? rec.NAME_de : rec.NAME;
+    }
+  };
+
+  // Funktion zur Bestimmung der Optionen basierend auf der aktuellen Sprache
+  const getOptions = (rec) => {
     let optionsString = '';
-    if (currentLang === 'de') {
-      optionsString = record.OPTI_de;
-    } else if (currentLang === 'fr') {
-      optionsString = record.OPTI_fr;
-    } else if (currentLang === 'it') {
-      optionsString = record.OPTI_it;
-    } else {
-      optionsString = record.OPTI_en;
+    switch (currentLang) {
+      case 'de':
+        optionsString = rec.OPTI_de && rec.OPTI_de.trim() ? rec.OPTI_de : rec.OPTI_en;
+        break;
+      case 'fr':
+        optionsString = rec.OPTI_fr && rec.OPTI_fr.trim() ? rec.OPTI_fr : (rec.OPTI_de && rec.OPTI_de.trim() ? rec.OPTI_de : rec.OPTI_en);
+        break;
+      case 'it':
+        optionsString = rec.OPTI_it && rec.OPTI_it.trim() ? rec.OPTI_it : (rec.OPTI_de && rec.OPTI_de.trim() ? rec.OPTI_de : rec.OPTI_en);
+        break;
+      case 'en':
+        optionsString = rec.OPTI_en && rec.OPTI_en.trim() ? rec.OPTI_en : (rec.OPTI_de && rec.OPTI_de.trim() ? rec.OPTI_de : rec.OPTI_en);
+        break;
+      default:
+        optionsString = rec.OPTI_de && rec.OPTI_de.trim() ? rec.OPTI_de : rec.OPTI_en;
     }
+    // Wenn optionsString leer oder undefined ist, geben wir ein leeres Array zurück
+    if (!optionsString || !optionsString.trim()) return [];
     return optionsString
       .split(',')
       .filter(opt => opt.trim() !== '')
       .map(opt => {
         const [key, label] = opt.split(':').map(s => s.trim());
-        return { value: key, label: label };
+        return { value: key, label };
       });
   };
 
   const handleUpdate = () => {
-    if (record.TYPE === 'num') {
-      const numValue = parseFloat(value);
-      const min = parseFloat(minValue);
-      const max = parseFloat(maxValue);
-      if (isNaN(numValue) || numValue < min || numValue > max) {
-        alert(`Der Wert muss zwischen ${min} und ${max} liegen.`);
-        return;
-      }
-    }
-    const payload = {
-      key: 'NAME',
-      search: record.NAME,
-      target: 'VAR_VALUE',
-      value: value,
-    };
-    socket.emit('update-variable', payload);
-    onUpdateSuccess(record, value);
-  };
-
-  const insertAtCursor = (newText) => {
-    if (inputRef.current && inputRef.current.input) {
-      const inputEl = inputRef.current.input;
-      const start = inputEl.selectionStart || 0;
-      const end = inputEl.selectionEnd || 0;
-      const newValue = value.substring(0, start) + newText + value.substring(end);
-      if (record.TYPE === 'num') {
-        const numValue = parseFloat(newValue);
-        const min = parseFloat(minValue);
-        const max = parseFloat(maxValue);
-        if (!newValue || (numValue >= min && numValue <= max)) {
-          setValue(newValue);
-          const newPos = start + newText.length;
-          setTimeout(() => {
-            inputEl.setSelectionRange(newPos, newPos);
-            inputEl.focus();
-          }, 0);
+    normalizedRecords.forEach(rec => {
+      if (rec.TYPE === 'num') {
+        const numValue = parseFloat(values[rec.NAME]);
+        const min = parseFloat(minValues[rec.NAME]);
+        const max = parseFloat(maxValues[rec.NAME]);
+        if (isNaN(numValue) || numValue < min || numValue > max) {
+          alert(`Der Wert für ${getLabel(rec)} muss zwischen ${min} und ${max} liegen.`);
+          return;
         }
-      } else {
-        setValue(newValue);
-        const newPos = start + newText.length;
-        setTimeout(() => {
-          inputEl.setSelectionRange(newPos, newPos);
-          inputEl.focus();
-        }, 0);
       }
-    } else if (record.TYPE !== 'num') {
-      setValue(prev => prev + newText);
+      const payload = {
+        key: 'NAME',
+        search: rec.NAME,
+        target: 'VAR_VALUE',
+        value: values[rec.NAME],
+      };
+      socket.emit('update-variable', payload);
+    });
+    onUpdateSuccess();
+  };
+
+  const insertAtCursor = (recordName, newText) => {
+    const inputEl = inputRefs.current[recordName]?.input;
+    if (inputEl) {
+      const start = inputEl.selectionStart || 0;
+      const end = inputEl.selectionEnd || 0;
+      const newValue = values[recordName].substring(0, start) + newText + values[recordName].substring(end);
+      setValues(prev => ({ ...prev, [recordName]: newValue }));
+      const newPos = start + newText.length;
+      setTimeout(() => {
+        inputEl.setSelectionRange(newPos, newPos);
+        inputEl.focus();
+      }, 0);
+    } else {
+      setValues(prev => ({ ...prev, [recordName]: prev[recordName] + newText }));
     }
   };
 
-  const deleteAtCursor = () => {
-    if (inputRef.current && inputRef.current.input) {
-      const inputEl = inputRef.current.input;
+  const deleteAtCursor = (recordName) => {
+    const inputEl = inputRefs.current[recordName]?.input;
+    if (inputEl) {
       const start = inputEl.selectionStart || 0;
       const end = inputEl.selectionEnd || 0;
-      let newValue = value;
+      let newValue = values[recordName];
       if (start !== end) {
-        newValue = value.substring(0, start) + value.substring(end);
+        newValue = values[recordName].substring(0, start) + values[recordName].substring(end);
       } else if (start > 0) {
-        newValue = value.substring(0, start - 1) + value.substring(end);
+        newValue = values[recordName].substring(0, start - 1) + values[recordName].substring(end);
       }
-      setValue(newValue);
+      setValues(prev => ({ ...prev, [recordName]: newValue }));
       const newPos = start > 0 ? start - 1 : 0;
       setTimeout(() => {
         inputEl.setSelectionRange(newPos, newPos);
         inputEl.focus();
       }, 0);
     } else {
-      setValue(prev => prev.slice(0, -1));
+      setValues(prev => ({ ...prev, [recordName]: prev[recordName].slice(0, -1) }));
     }
   };
 
-  const handleKeyboardInput = (input) => {
+  const handleKeyboardInput = (recordName, input) => {
     if (input === 'Löschen') {
-      deleteAtCursor();
+      deleteAtCursor(recordName);
     } else {
-      insertAtCursor(input);
+      insertAtCursor(recordName, input);
     }
   };
 
-  const moveCursor = (offset) => {
-    if (inputRef.current && inputRef.current.input) {
-      const inputEl = inputRef.current.input;
+  const moveCursor = (recordName, offset) => {
+    const inputEl = inputRefs.current[recordName]?.input;
+    if (inputEl) {
       const pos = inputEl.selectionStart || 0;
       const newPos = Math.max(0, pos + offset);
       inputEl.setSelectionRange(newPos, newPos);
@@ -154,138 +181,54 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
     }
   };
 
-  const handleCursorLeft = () => moveCursor(-1);
-  const handleCursorRight = () => moveCursor(1);
-
   const handleCancel = () => {
-    if (record) {
-      setValue(record.VAR_VALUE);
-      setMinValue(record.MIN);
-      setMaxValue(record.MAX);
+    if (normalizedRecords.length > 0) {
+      const resetValues = {};
+      normalizedRecords.forEach(rec => {
+        resetValues[rec.NAME] = rec.VAR_VALUE;
+      });
+      setValues(resetValues);
     }
     onCancel();
   };
 
   const handleUserAssignment = () => {
-    const updates = [
-      {
-        key: 'NAME',
-        search: record.NAME,
-        target: 'benutzer',
-        value: selectedUsers.join(','),
-      },
-    ];
+    normalizedRecords.forEach(rec => {
+      const updates = [
+        {
+          key: 'NAME',
+          search: rec.NAME,
+          target: 'benutzer',
+          value: selectedUsers[rec.NAME].join(','),
+        },
+      ];
 
-    if (record.TYPE === 'num') {
-      const minNum = parseFloat(minValue);
-      const maxNum = parseFloat(maxValue);
-      if (isNaN(minNum) || isNaN(maxNum) || minNum > maxNum) {
-        alert('Ungültige MIN- oder MAX-Werte. MIN muss kleiner oder gleich MAX sein.');
-        return;
+      if (rec.TYPE === 'num') {
+        const minNum = parseFloat(minValues[rec.NAME]);
+        const maxNum = parseFloat(maxValues[rec.NAME]);
+        if (isNaN(minNum) || isNaN(maxNum) || minNum > maxNum) {
+          alert(`Ungültige MIN- oder MAX-Werte für ${getLabel(rec)}.`);
+          return;
+        }
+        updates.push(
+          { key: 'NAME', search: rec.NAME, target: 'MIN', value: minValues[rec.NAME] },
+          { key: 'NAME', search: rec.NAME, target: 'MAX', value: maxValues[rec.NAME] }
+        );
       }
 
-      updates.push(
-        {
-          key: 'NAME',
-          search: record.NAME,
-          target: 'MIN',
-          value: minValue,
-        },
-        {
-          key: 'NAME',
-          search: record.NAME,
-          target: 'MAX',
-          value: maxValue,
-        }
-      );
-    }
-
-    updates.forEach(update => socket.emit('update-variable', update));
+      updates.forEach(update => socket.emit('update-variable', update));
+    });
     setUserModalVisible(false);
   };
 
   const allUsers = Object.values(pinMapping);
-
   const isCheckboxDisabled = (user) => {
     if (loggedInUser === 'fachmann') {
       return user === 'fachmann' || user === 'admin';
     }
     return false;
   };
-
   const showGearButton = loggedInUser === 'admin' || loggedInUser === 'fachmann';
-
-  let content = null;
-  if (record.TYPE === 'drop') {
-    content = (
-      <Select
-        value={value}
-        onChange={setValue}
-        style={{ width: '100%' }}
-        options={getOptions()}
-      />
-    );
-  } else if (record.TYPE === 'text') {
-    content = (
-      <div>
-        <Input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="Text eingeben"
-          style={{ marginBottom: '15px' }}
-        />
-        {!isNativeKeyboardAvailable && (
-          <SwissKeyboard
-            onInput={handleKeyboardInput}
-            onDelete={deleteAtCursor}
-            onCursorLeft={handleCursorLeft}
-            onCursorRight={handleCursorRight}
-            mode={keyboardMode}
-            setMode={setKeyboardMode}
-            onToggleCase={() => {
-              setIsUppercase(prev => !prev);
-              if (inputRef.current) inputRef.current.focus();
-            }}
-            isUppercase={isUppercase}
-          />
-        )}
-      </div>
-    );
-  } else if (record.TYPE === 'num') {
-    content = (
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
-          <Input
-            ref={inputRef}
-            value={value}
-            onChange={(e) => {
-              const newValue = e.target.value;
-              const numValue = parseFloat(newValue);
-              const min = parseFloat(minValue);
-              const max = parseFloat(maxValue);
-              if (!newValue || (numValue >= min && numValue <= max)) {
-                setValue(newValue);
-              }
-            }}
-            placeholder="Wert"
-            style={{ width: '20%', textAlign: 'center' }}
-          />
-          <span style={{ color: '#fff', fontSize: '16px' }}>{record.unit}</span>
-        </div>
-        <div style={{ marginTop: '8px', color: '#aaa', fontSize: '14px', textAlign: 'center' }}>
-          <span>Min: {minValue}</span> <span style={{ marginLeft: '16px' }}>Max: {maxValue}</span>
-        </div>
-        <NumericKeypad
-          onInput={handleKeyboardInput}
-          onDelete={deleteAtCursor}
-          onClear={() => setValue('')}
-        />
-      </div>
-    );
-  } else {
-    content = <div>Unbekannter Typ</div>;
-  }
 
   const modalWidth = xs ? "100vw" : "80vw";
 
@@ -293,19 +236,7 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
     <>
       <Modal
         visible={visible}
-        title={
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            {showGearButton && (
-              <Button
-                type="default"
-                icon={<SettingOutlined />}
-                style={{ marginRight: '10px' }}
-                onClick={() => setUserModalVisible(true)}
-              />
-            )}
-            <span>{`Wert bearbeiten: ${record ? record.NAME : ''}`}</span>
-          </div>
-        }
+        title="Variablen bearbeiten"
         onCancel={handleCancel}
         onOk={handleUpdate}
         centered
@@ -322,12 +253,76 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
           },
         }}
       >
-        {content}
+        {normalizedRecords.map(rec => (
+          <div key={rec.NAME} style={{ marginBottom: '20px' }}>
+            <h3>{getLabel(rec)}</h3> {/* Verwende sprachspezifisches Label */}
+            {rec.TYPE === 'drop' ? (
+              <Select
+                value={values[rec.NAME]}
+                onChange={value => setValues(prev => ({ ...prev, [rec.NAME]: value }))}
+                style={{ width: '100%' }}
+                options={getOptions(rec)} // Verwende sprachspezifische Optionen
+              />
+            ) : rec.TYPE === 'text' ? (
+              <div>
+                <Input
+                  ref={el => (inputRefs.current[rec.NAME] = el)}
+                  value={values[rec.NAME]}
+                  onChange={e => setValues(prev => ({ ...prev, [rec.NAME]: e.target.value }))}
+                  placeholder="Text eingeben"
+                  style={{ marginBottom: '15px' }}
+                />
+                <SwissKeyboard
+                  onInput={input => handleKeyboardInput(rec.NAME, input)}
+                  onDelete={() => deleteAtCursor(rec.NAME)}
+                  onCursorLeft={() => moveCursor(rec.NAME, -1)}
+                  onCursorRight={() => moveCursor(rec.NAME, 1)}
+                  mode={keyboardMode}
+                  setMode={setKeyboardMode}
+                  onToggleCase={() => setIsUppercase(prev => !prev)}
+                  isUppercase={isUppercase}
+                />
+              </div>
+            ) : rec.TYPE === 'num' ? (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+                  <Input
+                    ref={el => (inputRefs.current[rec.NAME] = el)}
+                    value={values[rec.NAME]}
+                    onChange={e => {
+                      const newValue = e.target.value;
+                      const numValue = parseFloat(newValue);
+                      const min = parseFloat(minValues[rec.NAME]);
+                      const max = parseFloat(maxValues[rec.NAME]);
+                      if (!newValue || (numValue >= min && numValue <= max)) {
+                        setValues(prev => ({ ...prev, [rec.NAME]: newValue }));
+                      }
+                    }}
+                    placeholder="Wert"
+                    style={{ width: '20%', textAlign: 'center' }}
+                  />
+                  <span style={{ color: '#fff', fontSize: '16px' }}>{rec.unit}</span>
+                </div>
+                <div style={{ marginTop: '8px', color: '#aaa', fontSize: '14px', textAlign: 'center' }}>
+                  <span>Min: {minValues[rec.NAME]}</span>{' '}
+                  <span style={{ marginLeft: '16px' }}>Max: {maxValues[rec.NAME]}</span>
+                </div>
+                <NumericKeypad
+                  onInput={input => handleKeyboardInput(rec.NAME, input)}
+                  onDelete={() => deleteAtCursor(rec.NAME)}
+                  onClear={() => setValues(prev => ({ ...prev, [rec.NAME]: '' }))}
+                />
+              </div>
+            ) : (
+              <div>Unbekannter Typ</div>
+            )}
+          </div>
+        ))}
       </Modal>
 
       <Modal
         visible={userModalVisible}
-        title={`Benutzer zuordnen: ${record ? record.NAME : ''}`}
+        title="Benutzer zuordnen"
         onCancel={() => setUserModalVisible(false)}
         onOk={handleUserAssignment}
         centered
@@ -342,12 +337,12 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
           },
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div>
-            <h3 style={{ color: '#fff' }}>Benutzer</h3>
+        {normalizedRecords.map(rec => (
+          <div key={rec.NAME} style={{ marginBottom: '20px' }}>
+            <h3 style={{ color: '#fff' }}>{getLabel(rec)}</h3> {/* Verwende sprachspezifisches Label */}
             <Checkbox.Group
-              value={selectedUsers}
-              onChange={setSelectedUsers}
+              value={selectedUsers[rec.NAME]}
+              onChange={users => setSelectedUsers(prev => ({ ...prev, [rec.NAME]: users }))}
               style={{ display: 'flex', flexDirection: 'column' }}
             >
               {allUsers.map(user => (
@@ -361,33 +356,33 @@ const EditVariableModal = ({ visible, record, onCancel, onUpdateSuccess }) => {
                 </Checkbox>
               ))}
             </Checkbox.Group>
-          </div>
-          {record.TYPE === 'num' && (
-            <div>
-              <h3 style={{ color: '#fff' }}>Bereich</h3>
-              <div style={{ display: 'flex', gap: '20px' }}>
-                <div>
-                  <label style={{ color: '#fff', marginRight: '10px' }}>Min:</label>
-                  <InputNumber
-                    value={minValue}
-                    onChange={(val) => setMinValue(val !== null ? val.toString() : '')}
-                    style={{ width: '100px', backgroundColor: '#1f1f1f', color: '#fff', borderColor: '#434343' }}
-                  />
-                  <label style={{ color: '#fff', marginRight: '10px' }}>{record.unit}</label>
-                </div>
-                <div>
-                  <label style={{ color: '#fff', marginRight: '10px' }}>Max:</label>
-                  <InputNumber
-                    value={maxValue}
-                    onChange={(val) => setMaxValue(val !== null ? val.toString() : '')}
-                    style={{ width: '100px', backgroundColor: '#1f1f1f', color: '#fff', borderColor: '#434343' }}
-                  />
-                  <label style={{ color: '#fff', marginRight: '10px' }}>{record.unit}</label>
+            {rec.TYPE === 'num' && (
+              <div style={{ marginTop: '20px' }}>
+                <h4 style={{ color: '#fff' }}>Bereich</h4>
+                <div style={{ display: 'flex', gap: '20px' }}>
+                  <div>
+                    <label style={{ color: '#fff', marginRight: '10px' }}>Min:</label>
+                    <InputNumber
+                      value={minValues[rec.NAME]}
+                      onChange={val => setMinValues(prev => ({ ...prev, [rec.NAME]: val !== null ? val.toString() : '' }))}
+                      style={{ width: '100px', backgroundColor: '#1f1f1f', color: '#fff', borderColor: '#434343' }}
+                    />
+                    <label style={{ color: '#fff', marginRight: '10px' }}>{rec.unit}</label>
+                  </div>
+                  <div>
+                    <label style={{ color: '#fff', marginRight: '10px' }}>Max:</label>
+                    <InputNumber
+                      value={maxValues[rec.NAME]}
+                      onChange={val => setMaxValues(prev => ({ ...prev, [rec.NAME]: val !== null ? val.toString() : '' }))}
+                      style={{ width: '100px', backgroundColor: '#1f1f1f', color: '#fff', borderColor: '#434343' }}
+                    />
+                    <label style={{ color: '#fff', marginRight: '10px' }}>{rec.unit}</label>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        ))}
       </Modal>
     </>
   );

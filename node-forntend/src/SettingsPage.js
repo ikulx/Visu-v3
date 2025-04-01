@@ -1,36 +1,31 @@
-// src/SettingsPage.js
 import React, { useEffect, useState, useMemo } from 'react';
 import { Modal, Table, Menu, Grid, Drawer, Button } from 'antd';
 import { useTranslation } from 'react-i18next';
 import socket from './socket';
 import EditVariableModal from './EditVariableModal';
-import { useUser } from './UserContext'; // Import useUser to access loggedInUser
+import { useUser } from './UserContext';
 
 const SettingsPage = ({ visible, onClose, user }) => {
   const { t, i18n } = useTranslation();
   const { xs } = Grid.useBreakpoint();
-  const { loggedInUser } = useUser(); // Get the currently logged-in user from context
+  const { loggedInUser } = useUser();
 
   const [settingsData, setSettingsData] = useState([]);
   const [selectedMain, setSelectedMain] = useState(null);
   const [selectedSub, setSelectedSub] = useState(null);
   const [menuDrawerVisible, setMenuDrawerVisible] = useState(false);
 
-  // State für das Edit-Popup
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editRecord, setEditRecord] = useState(null);
+  const [editRecords, setEditRecords] = useState([]); // Änderung zu Array
 
-  // Daten abrufen, wenn das Modal sichtbar ist und ein Benutzer vorhanden ist
   useEffect(() => {
     if (visible && loggedInUser) {
       socket.emit('request-settings', { user: loggedInUser });
     }
   }, [visible, loggedInUser]);
 
-  // Socket-Listener für Settings-Updates
   useEffect(() => {
     const handleSettingsUpdate = (data) => {
-      // Filtere die empfangenen Daten basierend auf dem aktuell angemeldeten Benutzer
       const filteredData = data.filter(row => {
         if (!row.benutzer) return false;
         const allowedUsers = row.benutzer.split(',').map(u => u.trim().toLowerCase());
@@ -42,7 +37,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
     return () => {
       socket.off("settings-update", handleSettingsUpdate);
     };
-  }, [loggedInUser]); // Abhängigkeit von loggedInUser, damit der Filter bei Benutzerwechsel aktualisiert wird
+  }, [loggedInUser]);
 
   const lang = i18n.language || 'en';
   const nameField =
@@ -51,12 +46,10 @@ const SettingsPage = ({ visible, onClose, user }) => {
     : lang === 'it' ? 'NAME_it'
     : 'NAME_en';
 
-  // Nur sichtbare Settings filtern
   const visibleSettings = useMemo(() => {
     return settingsData.filter(row => row.visible == 1 || row.visible === '1');
   }, [settingsData]);
 
-  // Gruppierung nach tag_top und tag_sub
   const groupedData = useMemo(() => {
     const groups = {};
     visibleSettings.forEach(row => {
@@ -95,7 +88,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
     return items;
   }, [groupedData, t]);
 
-  // Aktualisiere die aktuelle Auswahl, wenn sich die Gruppenstruktur ändert
   useEffect(() => {
     const mainKeys = Object.keys(groupedData);
     if (mainKeys.length === 0) {
@@ -127,7 +119,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
     }
   }, [groupedData, selectedMain, selectedSub]);
 
-  // Filtere Daten basierend auf der aktuellen Auswahl
   const filteredData = useMemo(() => {
     return visibleSettings.filter(row => {
       const main = row.tag_top || 'Ohne Gruppe';
@@ -141,7 +132,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
     });
   }, [visibleSettings, selectedMain, selectedSub]);
 
-  // Definiere die Tabellenspalten inklusive spezieller Darstellung bei TYPE "drop"
   const columns = [
     {
       title: t('Name'),
@@ -182,7 +172,6 @@ const SettingsPage = ({ visible, onClose, user }) => {
     }
   ];
 
-  // Handler für Menü-Klicks
   const onMenuClick = (e) => {
     const parts = e.key.split('___');
     setSelectedMain(parts[0]);
@@ -192,16 +181,13 @@ const SettingsPage = ({ visible, onClose, user }) => {
     }
   };
 
-  // Beim Klick auf eine Tabellenzeile das Edit-Popup öffnen
   const handleRowClick = (record) => {
-    setEditRecord(record);
+    setEditRecords([record]); // Ein Array mit einem Element
     setEditModalVisible(true);
   };
 
-  // Nach erfolgreichem Update das Popup schließen (optional: lokale Aktualisierung)
-  const handleUpdateSuccess = (record, newValue) => {
+  const handleUpdateSuccess = () => {
     setEditModalVisible(false);
-    // Hier kannst du zusätzlich das settingsData-Array aktualisieren, falls gewünscht
   };
 
   return (
@@ -212,7 +198,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
       title={t('Settings')}
       width={xs ? "100%" : "80%"}
       style={{ top: 0 }}
-      body={{ Style:{ padding: 0, overflow: 'hidden', backgroundColor: '#141414', color: '#fff' }}}
+      bodyStyle={{ padding: 0, overflow: 'hidden', backgroundColor: '#141414', color: '#fff' }}
       maskProps={{ style: { backgroundColor: 'rgba(0,0,0,0.7)' } }}
     >
       {xs ? (
@@ -281,11 +267,10 @@ const SettingsPage = ({ visible, onClose, user }) => {
           </div>
         </div>
       )}
-      {/* Edit-Popup */}
-      {editRecord && (
+      {editRecords.length > 0 && (
         <EditVariableModal
           visible={editModalVisible}
-          record={editRecord}
+          records={editRecords} // Übergabe als Array
           onCancel={() => setEditModalVisible(false)}
           onUpdateSuccess={handleUpdateSuccess}
         />

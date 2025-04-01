@@ -64,9 +64,11 @@ async function fetchMenuRawFromDB(sqliteDB) {
   return new Promise((resolve, reject) => {
     sqliteDB.all(
       `
-      SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key
+      SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key,
+             ma.id AS action_id, ma.action_name, ma.qhmi_variable_name
       FROM menu_items mi
       LEFT JOIN menu_properties mp ON mi.id = mp.menu_item_id
+      LEFT JOIN menu_actions ma ON mi.id = ma.menu_item_id
       ORDER BY mi.sort_order ASC
     `,
       [],
@@ -80,7 +82,6 @@ async function fetchMenuRawFromDB(sqliteDB) {
         const itemMap = new Map();
 
         rows.forEach((row) => {
-          // Versuche, den Label-Wert als JSON zu parsen, falls möglich
           let parsedLabel;
           try {
             parsedLabel = JSON.parse(row.label);
@@ -95,6 +96,7 @@ async function fetchMenuRawFromDB(sqliteDB) {
               svg: row.svg,
               enable: row.enable === 1,
               properties: {},
+              actions: {},
               sub: row.parent_id ? undefined : []
             });
           }
@@ -105,6 +107,12 @@ async function fetchMenuRawFromDB(sqliteDB) {
               source_type: row.source_type,
               source_key: row.source_key
             };
+          }
+          if (row.action_name && row.qhmi_variable_name) {
+            if (!item.actions[row.action_name]) {
+              item.actions[row.action_name] = [];
+            }
+            item.actions[row.action_name].push(row.qhmi_variable_name);
           }
         });
 
@@ -123,7 +131,7 @@ async function fetchMenuRawFromDB(sqliteDB) {
   });
 }
 
-// Rekursive Funktion zum Auflösen dynamischer Labels und Properties in der Menüstruktur
+
 // Rekursive Funktion zum Auflösen dynamischer Labels und Properties in der Menüstruktur
 async function resolveLabelsInMenu(sqliteDB, items) {
   return Promise.all(
@@ -190,7 +198,6 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const sortOrder = sortOrderStart + i;
-    // Falls label ein Objekt ist, als JSON-String speichern
     const labelValue = typeof item.label === 'object' ? JSON.stringify(item.label) : item.label;
     const itemId = await new Promise((resolve, reject) => {
       sqliteDB.run(
@@ -209,13 +216,23 @@ async function insertMenuItems(sqliteDB, items, parentId = null, sortOrderStart 
           typeof propData === 'object' && propData !== null
             ? propData
             : { value: propData, source_type: 'static', source_key: null };
-
         const insertValue = source_type === 'static' ? value : null;
 
         await sqliteDB.run(
           `INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) VALUES (?, ?, ?, ?, ?)`,
           [itemId, key, insertValue, source_type || 'static', source_key || null]
         );
+      }
+    }
+
+    if (item.actions) {
+      for (const [actionName, qhmiVariableNames] of Object.entries(item.actions)) {
+        for (const qhmiVariableName of qhmiVariableNames) {
+          await sqliteDB.run(
+            `INSERT INTO menu_actions (menu_item_id, action_name, qhmi_variable_name) VALUES (?, ?, ?)`,
+            [itemId, actionName, qhmiVariableName]
+          );
+        }
       }
     }
 

@@ -63,6 +63,17 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
         FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
       )
     `);
+    sqliteDB.run(`
+      CREATE TABLE IF NOT EXISTS "menu_actions" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "menu_item_id" INTEGER,
+        "action_name" VARCHAR,
+        "qhmi_variable_name" VARCHAR,
+        "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+        "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+        FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
+      )
+    `);
   }
 });
 
