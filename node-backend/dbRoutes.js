@@ -8,7 +8,7 @@ const router = express.Router();
 const nodeRedUrl = 'http://192.168.10.31:1880/db/Changes';
 
 // Verbindung zur SQLite-Datenbank herstellen
-const dbPath = path.join(__dirname, 'external', 'ycontroldata_settings.db');
+const dbPath = path.join(__dirname, 'external', 'ycontroldata_settings.sqlite');
 const sqliteDB = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Fehler beim Verbinden mit der SQLite-Datenbank:', err);
@@ -16,6 +16,10 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
     console.log('Verbindung zur SQLite-Datenbank hergestellt.');
   }
 });
+
+// Importiere Funktionen aus menuHandler.js und mqttHandler.js
+const { fetchMenuForFrontend } = require('./menuHandler');
+const { updateCachedMenuData, checkAndSendMqttUpdates } = require('./mqttHandler');
 
 // Erlaubte Spaltennamen (Whitelist) aus dem Schema der Tabelle QHMI_VARIABLES
 const allowedColumns = [
@@ -68,25 +72,25 @@ async function sendFullDbUpdate() {
 // Funktion zum Broadcasten der Settings über Socket.IO
 function broadcastSettings() {
   const sql = `SELECT 
-  NAME, 
-  NAME_de, 
-  NAME_fr, 
-  NAME_en, 
-  NAME_it, 
-  VAR_VALUE, 
-  benutzer, 
-  visible, 
-  tag_top, 
-  tag_sub,
-  TYPE,
-  OPTI_de,
-  OPTI_fr,
-  OPTI_en,
-  OPTI_it,
-  MIN,
-  MAX,
-  unit
-  FROM QHMI_VARIABLES`;
+                 NAME, 
+                 NAME_de, 
+                 NAME_fr, 
+                 NAME_en, 
+                 NAME_it, 
+                 VAR_VALUE, 
+                 benutzer, 
+                 visible, 
+                 tag_top, 
+                 tag_sub,
+                 TYPE,
+                 OPTI_de,
+                 OPTI_fr,
+                 OPTI_en,
+                 OPTI_it,
+                 MIN,
+                 MAX,
+                 unit
+               FROM QHMI_VARIABLES`;
   sqliteDB.all(sql, [], (err, rows) => {
     if (err) {
       console.error("Fehler beim Abrufen der Settings:", err);
@@ -119,6 +123,11 @@ router.post('/update-variable', (req, res) => {
     
     sendFullDbUpdate();
     broadcastSettings();
+    fetchMenuForFrontend(sqliteDB)
+      .then((menu) => {
+        global.io.emit("menu-update", menu);
+      })
+      .catch(err => console.error("Fehler beim Aktualisieren des Menüs:", err));
     
     res.json({ message: "Datenbank erfolgreich aktualisiert.", changes: this.changes });
   });
@@ -165,11 +174,26 @@ router.post('/update-batch', (req, res) => {
     executed++;
     if (executed === total) {
       broadcastSettings();
-      if (errors.length > 0) {
-        res.status(500).json({ message: "Einige Updates konnten nicht ausgeführt werden.", errors });
-      } else {
-        res.json({ message: "Alle Updates wurden erfolgreich ausgeführt.", count: executed });
-      }
+      // Nach Abschluss der Batch-Updates: Menü neu auflösen und an Clients senden
+      fetchMenuForFrontend(sqliteDB)
+        .then((menu) => {
+          global.io.emit("menu-update", menu);
+          // Neu: Überprüfe, ob MQTT-Propertys gesendet werden sollen (z. B. wenn sich Konfigurationen geändert haben)
+          checkAndSendMqttUpdates(global.io, sqliteDB);
+          if (errors.length > 0) {
+            res.status(500).json({ message: "Einige Updates konnten nicht ausgeführt werden.", errors });
+          } else {
+            res.json({ message: "Alle Updates wurden erfolgreich ausgeführt.", count: executed });
+          }
+        })
+        .catch(err => {
+          console.error("Fehler beim Aktualisieren des Menüs:", err);
+          if (errors.length > 0) {
+            res.status(500).json({ message: "Einige Updates konnten nicht ausgeführt werden.", errors });
+          } else {
+            res.status(500).json({ message: "Fehler beim Aktualisieren des Menüs." });
+          }
+        });
     }
   }
 });

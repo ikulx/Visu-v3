@@ -30,7 +30,7 @@ global.io = io;
 app.use(bodyParser.json());
 
 // SQLite database connection
-const dbPath = path.join(__dirname, 'external', 'ycontroldata_settings.db');
+const dbPath = path.join(__dirname, 'external', 'ycontroldata_settings.sqlite');
 const sqliteDB = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Fehler beim Verbinden mit der SQLite-Datenbank:', err);

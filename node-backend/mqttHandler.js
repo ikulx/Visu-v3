@@ -1,3 +1,4 @@
+// mqttHandler.js
 const mqtt = require('mqtt');
 
 async function fetchMenuRawFromDB(sqliteDB) {
@@ -17,10 +18,16 @@ async function fetchMenuRawFromDB(sqliteDB) {
       const itemMap = new Map();
 
       rows.forEach(row => {
+        let parsedLabel;
+        try {
+          parsedLabel = JSON.parse(row.label);
+        } catch (e) {
+          parsedLabel = row.label;
+        }
         if (!itemMap.has(row.id)) {
           itemMap.set(row.id, {
             link: row.link,
-            label: row.label,
+            label: parsedLabel,
             svg: row.svg,
             enable: row.enable === 1,
             properties: {},
@@ -52,8 +59,10 @@ async function fetchMenuRawFromDB(sqliteDB) {
 }
 
 let cachedMenuData = null;
+let fetchMenuForFrontendFn = null;
 
 function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
+  fetchMenuForFrontendFn = fetchMenuForFrontend;
   const mqttClient = mqtt.connect('mqtt://192.168.10.31:1883', {
     protocolVersion: 4,
     clientId: 'visu-backend-' + Math.random().toString(16).substr(2, 8),
@@ -91,27 +100,18 @@ function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
         return;
       }
 
-      if (!cachedMenuData) {
-        cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
-        console.log('Cached Menu Data nachgeladen:', JSON.stringify(cachedMenuData, null, 2));
-      }
-
-      console.log('Empfangene MQTT-Nachricht:', JSON.stringify(payload, null, 2));
-
       const updates = {};
-
       for (const item of payload) {
         const { topic: itemTopic, value } = item;
         if (!itemTopic || value === undefined) {
           console.warn('Ungültiges MQTT-Item:', item);
           continue;
         }
-
         let foundMatch = false;
-
-        for (const menuItem of cachedMenuData.menuItems) {
-          for (const [propKey, prop] of Object.entries(menuItem.properties)) {
-            if (prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
+        for (const menuItem of (cachedMenuData?.menuItems || [])) {
+          if (!menuItem.enable) continue;
+          for (const [propKey, prop] of Object.entries(menuItem.properties || {})) {
+            if (prop && prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
               const updateKey = `${menuItem.link}.${propKey}`;
               updates[updateKey] = value;
               console.log(`Property hinzugefügt: ${updateKey} = ${value}`);
@@ -119,19 +119,16 @@ function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
             }
           }
           if (menuItem.sub) {
-            processSubItems(menuItem.sub, menuItem.link, itemTopic, value, updates);
-            if (Object.keys(updates).length > Object.keys(updates).filter(k => k.startsWith(menuItem.link)).length) {
+            const subFound = processSubItems(menuItem.sub, menuItem.link, itemTopic, value, updates);
+            if (subFound) {
               foundMatch = true;
             }
           }
         }
-
         if (!foundMatch) {
           console.warn(`Kein Treffer für topic '${itemTopic}' in cachedMenuData`);
         }
       }
-
-      console.log('Finales updates-Objekt:', JSON.stringify(updates, null, 2));
 
       if (Object.keys(updates).length > 0) {
         io.emit('mqtt-property-update', updates);
@@ -145,18 +142,25 @@ function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
   });
 
   function processSubItems(subItems, parentLink, itemTopic, value, updates) {
+    let found = false;
     for (const subItem of subItems) {
-      for (const [propKey, prop] of Object.entries(subItem.properties)) {
-        if (prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
+      if (!subItem.enable) continue;
+      for (const [propKey, prop] of Object.entries(subItem.properties || {})) {
+        if (prop && prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
           const updateKey = `${subItem.link}.${propKey}`;
           updates[updateKey] = value;
           console.log(`SubItem-Property hinzugefügt: ${updateKey} = ${value}`);
+          found = true;
         }
       }
       if (subItem.sub) {
-        processSubItems(subItem.sub, subItem.link, itemTopic, value, updates);
+        const subFound = processSubItems(subItem.sub, subItem.link, itemTopic, value, updates);
+        if (subFound) {
+          found = true;
+        }
       }
     }
+    return found;
   }
 
   mqttClient.on('error', (err) => {
@@ -179,4 +183,68 @@ async function updateCachedMenuData(sqliteDB) {
   }
 }
 
-module.exports = { setupMqtt, updateCachedMenuData };
+async function checkAndSendMqttUpdates(io, sqliteDB) {
+  try {
+    // Menüstruktur mit dynamischen Labels laden (Sichtbarkeit berücksichtigt)
+    const currentMenu = await fetchMenuForFrontendFn(sqliteDB);
+    if (!currentMenu || !currentMenu.menuItems) {
+      console.warn('Keine Menüdaten verfügbar für MQTT-Überprüfung.');
+      return;
+    }
+    const updates = {};
+    // Alle MQTT-Property-Keys aus dem gecachten Menü sammeln
+    const dynamicKeys = new Set();
+    const collectDynamicKeys = (items) => {
+      for (const item of items) {
+        if (!item) continue;
+        for (const [key, prop] of Object.entries(item.properties || {})) {
+          if (prop && prop.source_type === 'mqtt') {
+            dynamicKeys.add(`${item.link}.${key}`);
+          }
+        }
+        if (item.sub && Array.isArray(item.sub)) {
+          collectDynamicKeys(item.sub);
+        }
+      }
+    };
+    if (cachedMenuData?.menuItems) {
+      collectDynamicKeys(cachedMenuData.menuItems);
+    }
+    // Werte aller MQTT-Properties für sichtbare Menüpunkte sammeln
+    const collectUpdates = (items) => {
+      for (const item of items) {
+        if (!item) continue;
+        if (item.enable !== true) {
+          continue; // überspringe ausgeblendete/disabled Menüpunkte
+        }
+        for (const [propKey, propValue] of Object.entries(item.properties || {})) {
+          const fullKey = `${item.link}.${propKey}`;
+          if (dynamicKeys.has(fullKey)) {
+            // nur Properties senden, die ursprünglich von MQTT stammen
+            let sendValue;
+            if (propValue && typeof propValue === 'object' && 'value' in propValue) {
+              sendValue = propValue.value;
+            } else {
+              sendValue = propValue;
+            }
+            updates[fullKey] = sendValue;
+          }
+        }
+        if (item.sub && Array.isArray(item.sub)) {
+          collectUpdates(item.sub);
+        }
+      }
+    };
+    collectUpdates(currentMenu.menuItems);
+    if (Object.keys(updates).length > 0) {
+      io.emit('mqtt-property-update', updates);
+      console.log('MQTT-Property-Updates gesendet:', JSON.stringify(updates, null, 2));
+    } else {
+      console.log('Keine MQTT-Property-Updates erforderlich.');
+    }
+  } catch (err) {
+    console.error('Fehler beim Überprüfen der MQTT-Properties:', err);
+  }
+}
+
+module.exports = { setupMqtt, updateCachedMenuData, checkAndSendMqttUpdates };

@@ -124,24 +124,53 @@ async function fetchMenuRawFromDB(sqliteDB) {
 }
 
 // Rekursive Funktion zum Auflösen dynamischer Labels und Properties in der Menüstruktur
+// Rekursive Funktion zum Auflösen dynamischer Labels und Properties in der Menüstruktur
 async function resolveLabelsInMenu(sqliteDB, items) {
   return Promise.all(
     items.map(async (item) => {
       let resolvedLabel = item.label;
-      if (typeof item.label === 'object') {
+      let resolvedEnable = item.enable;
+
+      // Prüfen, ob das Label ein Objekt ist und dynamisch aufgelöst werden muss
+      if (typeof item.label === 'object' && item.label.source_type === 'dynamic') {
+        resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
+
+        // Zusätzlich das 'visible'-Feld aus QHMI_VARIABLES abrufen und 'enable' setzen
+        resolvedEnable = await new Promise((resolve) => {
+          sqliteDB.get(
+            `SELECT visible FROM QHMI_VARIABLES WHERE NAME = ?`,
+            [item.label.source_key],
+            (err, row) => {
+              if (err || !row) {
+                console.error(`Fehler beim Abrufen von visible für ${item.label.source_key}:`, err);
+                resolve(item.enable); // Fallback auf ursprünglichen Wert
+              } else {
+                // Konvertiere 'visible' (VARCHAR) zu einem Boolean-Wert für 'enable'
+                resolve(row.visible === '1' || row.visible === 'true');
+              }
+            }
+          );
+        });
+      } else if (typeof item.label === 'object') {
         resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
       }
+
+      // Untermenüs rekursiv auflösen
       let resolvedSub = [];
       if (item.sub && item.sub.length > 0) {
         resolvedSub = await resolveLabelsInMenu(sqliteDB, item.sub);
       }
+
+      // Properties auflösen
       const properties = {};
       for (const [key, prop] of Object.entries(item.properties)) {
         properties[key] = await resolvePropertyValue(sqliteDB, prop);
       }
+
       return {
         ...item,
         label: resolvedLabel,
+        enable: resolvedEnable, // Aktualisiertes enable-Feld
         properties,
         sub: resolvedSub
       };
