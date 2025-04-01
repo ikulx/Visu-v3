@@ -9,6 +9,7 @@ import {
   WarningOutlined, 
   LineChartOutlined 
 } from '@ant-design/icons';
+import ChartPopup from '../ChartPopup'; // Neue Komponente importieren
 import './FooterComponent.css';
 
 const { Text } = Typography;
@@ -16,12 +17,12 @@ const { Text } = Typography;
 const FooterComponent = () => {
   const [footerData, setFooterData] = useState({ temperature: '–', alarmButton: 0 });
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [chartVisible, setChartVisible] = useState(false); // State für Popup-Sichtbarkeit
   const location = useLocation();
 
   useEffect(() => {
     const socket = io(`http://${window.location.hostname}:3001`);
     socket.on('footer-update', data => {
-      //console.log('Footer update received:', data);
       setFooterData(data);
     });
     const timer = setInterval(() => {
@@ -49,7 +50,7 @@ const FooterComponent = () => {
   };
 
   const handleChartClick = () => {
-    alert('LineChartOutlined Button wurde geklickt!');
+    setChartVisible(true); // Popup öffnen
   };
 
   // Umwandlung in Zahl, falls notwendig
@@ -73,7 +74,6 @@ const FooterComponent = () => {
     }
   };
 
-  // Gemeinsamer Button-Stil für beide Buttons
   const buttonStyle = {
     width: '64px',
     height: '64px',
@@ -85,7 +85,6 @@ const FooterComponent = () => {
     boxShadow: 'none',
   };
 
-  // Nur für den ersten Button: Wenn alarmVal > 10, setze den Border auf blau.
   const firstButtonStyle = {
     ...buttonStyle,
     border: alarmVal > 10 ? '2px solid blue' : 'none',
@@ -93,7 +92,6 @@ const FooterComponent = () => {
 
   return (
     <Row style={{ height: '100%' }} align="middle" justify="space-between">
-      {/* Linke Spalte: Zwei Buttons */}
       <Col span={8}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <Button type="default" ghost style={firstButtonStyle} onClick={handleCheckClick}>
@@ -105,7 +103,6 @@ const FooterComponent = () => {
         </div>
       </Col>
 
-      {/* Mittlere Spalte: Logo (nur wenn nicht auf "/" ) */}
       {location.pathname !== '/' ? (
         <Col span={8} style={{ textAlign: 'center' }}>
           <img
@@ -119,7 +116,6 @@ const FooterComponent = () => {
         <Col span={8} />
       )}
 
-      {/* Rechte Spalte: Temperatur, Uhrzeit & Datum */}
       <Col span={8} style={{ textAlign: 'right', paddingRight: 16 }}>
         <div style={{ fontSize: 20, lineHeight: 1.2, color: '#fff' }}>
           <Text style={{fontSize: 18, display: 'block', margin: 0, padding: 0 }}>
@@ -130,6 +126,9 @@ const FooterComponent = () => {
           </Text>
         </div>
       </Col>
+
+      {/* Chart Popup */}
+      <ChartPopup visible={chartVisible} onClose={() => setChartVisible(false)} />
     </Row>
   );
 };

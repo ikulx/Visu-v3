@@ -6,20 +6,22 @@ class LoggingHandler {
     this.io = io;
     this.sqliteDB = sqliteDB;
     this.mqttHandler = mqttHandler;
+    this.influxDB = new InfluxDB({
+      url: 'http://192.168.10.31:8086',
+      token: 'VB4OadT3sVDTkKApno6dZaKbmZhNdBzHn93YDyH41fXRNVHuw49-R1sFL0IYrP6ysoPQAq3QNFVt165MqbjsAg==',
+    });
+    this.queryApi = this.influxDB.getQueryApi('YgnisAG');
     this.influxClient = this.setupInfluxClient();
     this.activeTopics = new Set();
-    this.valueCache = new Map(); // Zwischenspeicher für Werte pro Topic
+    this.valueCache = new Map();
     this.loadLoggingSettings();
     this.setupMqttListener();
     this.startMinuteInterval();
+    this.setupSocketHandlers();
   }
 
   setupInfluxClient() {
-    const influxDB = new InfluxDB({
-      url: 'http://192.168.10.31:8086', // Ihre InfluxDB-URL
-      token: 'VB4OadT3sVDTkKApno6dZaKbmZhNdBzHn93YDyH41fXRNVHuw49-R1sFL0IYrP6ysoPQAq3QNFVt165MqbjsAg==' // Ihr InfluxDB-Token
-    });
-    return influxDB.getWriteApi('YgnisAG', 'dev-bucket', 'ms');
+    return this.influxDB.getWriteApi('YgnisAG', 'dev-bucket', 'ms');
   }
 
   async loadLoggingSettings() {
@@ -32,6 +34,7 @@ class LoggingHandler {
         );
       });
       this.activeTopics = new Set(rows.map(row => row.topic));
+      console.log('Active topics loaded:', this.activeTopics);
     } catch (err) {
       console.error('Fehler beim Laden der Logging-Einstellungen:', err);
     }
@@ -39,6 +42,7 @@ class LoggingHandler {
 
   setupMqttListener() {
     this.mqttHandler.onMessage((topic, value) => {
+      console.log('MQTT message received:', { topic, value });
       if (this.activeTopics.has(topic)) {
         this.storeValue(topic, value);
       }
@@ -51,32 +55,33 @@ class LoggingHandler {
       console.warn(`Ungültiger Wert für Topic ${topic}: ${value}`);
       return;
     }
-
     if (!this.valueCache.has(topic)) {
       this.valueCache.set(topic, []);
     }
     this.valueCache.get(topic).push(numericValue);
+    console.log(`Stored value for ${topic}: ${numericValue}`);
   }
 
   startMinuteInterval() {
     setInterval(() => {
       this.writeAveragesToInflux();
-    }, 60 * 1000); // Jede Minute (60 Sekunden)
+    }, 60 * 1000);
   }
 
   writeAveragesToInflux() {
     if (this.valueCache.size === 0) {
-      return; // Keine Daten zum Schreiben
+      console.log('No data in valueCache to write');
+      return;
     }
 
     const points = [];
     for (const [topic, values] of this.valueCache.entries()) {
       if (values.length === 0) continue;
 
-      const average = values.reduce((sum, val) => sum + val, 0) / values.length;
+      const average = Number(values.reduce((sum, val) => sum + val, 0) / values.length).toFixed(1); // Eine Nachkommastelle
       const point = new Point('mqtt_logs')
         .tag('topic', topic)
-        .floatField('average', average)
+        .floatField('average', parseFloat(average)) // Als Float speichern
         .timestamp(new Date());
 
       points.push(point);
@@ -85,12 +90,13 @@ class LoggingHandler {
 
     if (points.length > 0) {
       this.influxClient.writePoints(points);
-      this.influxClient.flush().catch(err => {
+      this.influxClient.flush().then(() => {
+        console.log('Data written to InfluxDB:', points.map(p => p.toString()));
+      }).catch(err => {
         console.error('Fehler beim Schreiben der Mittelwerte in InfluxDB:', err);
       });
     }
 
-    // Zwischenspeicher zurücksetzen
     this.valueCache.clear();
   }
 
@@ -109,7 +115,7 @@ class LoggingHandler {
         this.activeTopics.add(topic);
       } else {
         this.activeTopics.delete(topic);
-        this.valueCache.delete(topic); // Zwischenspeicher für deaktivierte Topics löschen
+        this.valueCache.delete(topic);
       }
 
       this.broadcastSettings();
@@ -132,8 +138,52 @@ class LoggingHandler {
     );
   }
 
+  async fetchChartData(socket) {
+    console.log('fetchChartData: Starting data fetch');
+    try {
+      const topicFilter = Array.from(this.activeTopics)
+        .map(topic => `r.topic == "${topic}"`)
+        .join(' or ');
+      const fluxQuery = `
+        from(bucket: "dev-bucket")
+          |> range(start: -1h)
+          |> filter(fn: (r) => r._measurement == "mqtt_logs")
+          |> filter(fn: (r) => r._field == "average")
+          ${topicFilter ? `|> filter(fn: (r) => ${topicFilter})` : ''}
+          |> pivot(rowKey: ["_time"], columnKey: ["topic"], valueColumn: "_value")
+      `;
+      console.log('fetchChartData: Executing Flux query:', fluxQuery);
+
+      const data = [];
+      await this.queryApi.collectRows(fluxQuery, (row, tableMeta) => {
+        console.log('Raw row from InfluxDB:', row);
+        const timestamp = new Date(tableMeta.get(row, '_time')).getTime();
+        const entry = { time: timestamp };
+        this.activeTopics.forEach(topic => {
+          const value = tableMeta.get(row, topic);
+          if (value !== undefined && value !== null) {
+            entry[topic] = parseFloat(value);
+          }
+        });
+        if (Object.keys(entry).length > 1) {
+          data.push(entry);
+        }
+      });
+
+      console.log('fetchChartData: Processed data:', data);
+      if (data.length === 0) {
+        console.warn('fetchChartData: No data returned from InfluxDB');
+      }
+      socket.emit('chart-data-update', data);
+    } catch (error) {
+      console.error('fetchChartData: Error fetching chart data:', error);
+      socket.emit('chart-data-error', { message: 'Fehler beim Laden der Daten', error: error.message });
+    }
+  }
+
   setupSocketHandlers() {
     this.io.on('connection', (socket) => {
+      console.log('Client connected:', socket.id);
       socket.on('update-logging-setting', ({ topic, enabled }) => {
         this.updateLoggingSettings(topic, enabled);
       });
@@ -141,13 +191,17 @@ class LoggingHandler {
       socket.on('request-logging-settings', () => {
         this.broadcastSettings();
       });
+
+      socket.on('request-chart-data', () => {
+        console.log('Received request-chart-data from client:', socket.id, 'at', new Date().toISOString());
+        this.fetchChartData(socket);
+      });
     });
   }
 }
 
 function setupLogging(io, sqliteDB, mqttHandler) {
   const logger = new LoggingHandler(io, sqliteDB, mqttHandler);
-  logger.setupSocketHandlers();
   return logger;
 }
 
