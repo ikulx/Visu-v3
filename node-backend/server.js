@@ -1,4 +1,3 @@
-// src/server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -14,7 +13,7 @@ const {
   setupMenuHandlers,
   updateMenuHandler,
   updatePropertiesHandler,
-  defaultMenu
+  defaultMenu,
 } = require('./menuHandler');
 
 const app = express();
@@ -22,9 +21,9 @@ const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
 });
 global.io = io;
 
@@ -78,25 +77,62 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
     `);
     sqliteDB.run(`
       CREATE TABLE IF NOT EXISTS "menu_svg_conditions" (
-      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-      "menu_item_id" INTEGER,
-      "value" VARCHAR,
-      "svg" VARCHAR,
-      "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
-      "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
-      FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
-    )
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "menu_item_id" INTEGER,
+        "value" VARCHAR,
+        "svg" VARCHAR,
+        "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+        "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+        FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE
+      )
     `);
     sqliteDB.run(`
       CREATE TABLE IF NOT EXISTS "logging_settings" (
-      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-      "topic" VARCHAR UNIQUE,              -- MQTT-Topic, das aufgezeichnet werden soll
-      "enabled" BOOLEAN DEFAULT 1,         -- Ob die Aufzeichnung aktiv ist
-      "description" TEXT,                  -- Beschreibung des Logs
-      "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
-      "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime'))
-  )
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "topic" VARCHAR UNIQUE,              -- MQTT-Topic, das aufgezeichnet werden soll
+        "enabled" BOOLEAN DEFAULT 1,         -- Ob die Aufzeichnung aktiv ist
+        "color" TEXT,                        -- Farbe für das Topic
+        "page" TEXT,                         -- Zugeordnete Seite (z. B. Link aus menu_items)
+        "description" TEXT,
+        "unit" TEXT,                
+        "created_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime')),
+        "updated_at" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M','now', 'localtime'))
+      )
     `);
+
+    // Migration: color- und page-Spalte hinzufügen, falls sie nicht existieren
+    sqliteDB.all('PRAGMA table_info(logging_settings)', (err, columns) => {
+      if (err) {
+        console.error('Fehler beim Prüfen der Tabellenstruktur:', err);
+        return;
+      }
+      const hasColorColumn = columns.some(col => col.name === 'color');
+      const hasPageColumn = columns.some(col => col.name === 'page');
+      if (!hasColorColumn) {
+        sqliteDB.run(`
+          ALTER TABLE logging_settings
+          ADD COLUMN color TEXT
+        `, (err) => {
+          if (err) {
+            console.error('Fehler beim Hinzufügen der color-Spalte:', err);
+          } else {
+            console.log('color-Spalte erfolgreich hinzugefügt');
+          }
+        });
+      }
+      if (!hasPageColumn) {
+        sqliteDB.run(`
+          ALTER TABLE logging_settings
+          ADD COLUMN page TEXT
+        `, (err) => {
+          if (err) {
+            console.error('Fehler beim Hinzufügen der page-Spalte:', err);
+          } else {
+            console.log('page-Spalte erfolgreich hinzugefügt');
+          }
+        });
+      }
+    });
   }
 });
 
@@ -123,19 +159,19 @@ async function sendNodeRedUpdate(name, var_value) {
     const response = await fetch('http://192.168.10.31:1880/db/Changes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
     const data = await response.json();
-    console.log("Node-RED update successful:", data);
+    console.log('Node-RED update successful:', data);
   } catch (error) {
-    console.error("Error updating Node-RED:", error);
+    console.error('Error updating Node-RED:', error);
   }
 }
 
 async function sendFullDbUpdate() {
-  sqliteDB.all("SELECT * FROM QHMI_VARIABLES", [], async (err, rows) => {
+  sqliteDB.all('SELECT * FROM QHMI_VARIABLES', [], async (err, rows) => {
     if (err) {
-      console.error("Fehler beim Abrufen der kompletten Datenbank:", err);
+      console.error('Fehler beim Abrufen der kompletten Datenbank:', err);
       return;
     }
     try {
@@ -143,12 +179,12 @@ async function sendFullDbUpdate() {
       const response = await fetch('http://192.168.10.31:1880/db/fullChanges', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rows)
+        body: JSON.stringify(rows),
       });
       const data = await response.json();
-      console.log("Gesamte DB-Änderung erfolgreich gesendet:", data);
+      console.log('Gesamte DB-Änderung erfolgreich gesendet:', data);
     } catch (error) {
-      console.error("Fehler beim Senden der kompletten DB-Änderung:", error);
+      console.error('Fehler beim Senden der kompletten DB-Änderung:', error);
     }
   });
 }
@@ -162,7 +198,7 @@ function broadcastSettings(socket = null, user = null) {
                FROM QHMI_VARIABLES`;
   sqliteDB.all(sql, [], (err, rows) => {
     if (err) {
-      console.error("Fehler beim Abrufen der Settings:", err);
+      console.error('Fehler beim Abrufen der Settings:', err);
       return;
     }
     let filteredRows = rows;
@@ -174,7 +210,7 @@ function broadcastSettings(socket = null, user = null) {
       });
     }
     if (socket) {
-      socket.emit("settings-update", filteredRows);
+      socket.emit('settings-update', filteredRows);
     } else {
       for (const [id, s] of io.sockets.sockets) {
         const usr = s.loggedInUser;
@@ -186,7 +222,7 @@ function broadcastSettings(socket = null, user = null) {
             return allowedUsers.includes(usr.toLowerCase());
           });
         }
-        s.emit("settings-update", filtered);
+        s.emit('settings-update', filtered);
       }
     }
   });
@@ -212,48 +248,47 @@ io.on('connection', (socket) => {
 
   socket.on('update-variable', (payload) => {
     if (!payload.key || !payload.search || !payload.target) {
-      socket.emit("update-error", { message: "Ungültiger Payload" });
+      socket.emit('update-error', { message: 'Ungültiger Payload' });
       return;
     }
 
     const allowedColumns = [
-      "NAME", "VAR_VALUE", "benutzer", "visible", "tag_top", "tag_sub", "TYPE",
-      "OPTI_de", "OPTI_fr", "OPTI_en", "OPTI_it", "MIN", "MAX", "unit",
-      "NAME_de", "NAME_fr", "NAME_en", "NAME_it"
+      'NAME', 'VAR_VALUE', 'benutzer', 'visible', 'tag_top', 'tag_sub', 'TYPE',
+      'OPTI_de', 'OPTI_fr', 'OPTI_en', 'OPTI_it', 'MIN', 'MAX', 'unit',
+      'NAME_de', 'NAME_fr', 'NAME_en', 'NAME_it',
     ];
     if (!allowedColumns.includes(payload.target) || !allowedColumns.includes(payload.key)) {
-      socket.emit("update-error", { message: "Ungültige Spaltenangabe." });
+      socket.emit('update-error', { message: 'Ungültige Spaltenangabe.' });
       return;
     }
 
     const sql = `UPDATE QHMI_VARIABLES SET ${payload.target} = ? WHERE ${payload.key} = ?`;
-    sqliteDB.run(sql, [payload.value, payload.search], function(err) {
+    sqliteDB.run(sql, [payload.value, payload.search], function (err) {
       if (err) {
-        console.error("Fehler beim Aktualisieren der Datenbank:", err);
-        socket.emit("update-error", { message: "Fehler beim Aktualisieren der Datenbank." });
+        console.error('Fehler beim Aktualisieren der Datenbank:', err);
+        socket.emit('update-error', { message: 'Fehler beim Aktualisieren der Datenbank.' });
         return;
       }
 
-      if (payload.target === "VAR_VALUE") {
+      if (payload.target === 'VAR_VALUE') {
         sendNodeRedUpdate(payload.search, payload.value);
       }
 
       sendFullDbUpdate();
       broadcastSettings();
-      // Neu: Nach Settings-Update auch das Menü neu laden und an alle Clients senden
       fetchMenuForFrontend(sqliteDB)
         .then((menu) => {
-          io.emit("menu-update", menu);
+          io.emit('menu-update', menu);
         })
-        .catch(err => console.error("Fehler beim Aktualisieren des Menüs:", err));
+        .catch(err => console.error('Fehler beim Aktualisieren des Menüs:', err));
 
-      socket.emit("update-success", { changes: this.changes });
+      socket.emit('update-success', { changes: this.changes });
     });
   });
 
-  // Neu: Logging-Einstellungen
+  // Logging-Einstellungen
   socket.on('request-logging-settings', () => {
-    sqliteDB.all('SELECT * FROM logging_settings', [], (err, rows) => {
+    sqliteDB.all('SELECT topic, enabled, color, page, description FROM logging_settings', [], (err, rows) => {
       if (err) {
         console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
         return;
@@ -263,16 +298,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('update-logging-setting', (data) => {
-    const { topic, enabled } = data;
+    const { topic, enabled, color, page } = data;
     sqliteDB.run(
-      `INSERT OR REPLACE INTO logging_settings (topic, enabled, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
-      [topic, enabled ? 1 : 0],
+      `INSERT OR REPLACE INTO logging_settings (topic, enabled, color, page, updated_at) 
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
+      [topic, enabled ? 1 : 0, color, page],
       (err) => {
         if (err) {
           console.error('Fehler beim Aktualisieren der Logging-Einstellungen:', err);
           return;
         }
-        sqliteDB.all('SELECT * FROM logging_settings', [], (err, rows) => {
+        sqliteDB.all('SELECT topic, enabled, color, page, description FROM logging_settings', [], (err, rows) => {
           if (err) {
             console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
             return;
@@ -291,7 +327,7 @@ io.on('connection', (socket) => {
 app.use('/db', dbRoutes);
 
 const mqttHandler = setupMqtt(io, sqliteDB, fetchMenuForFrontend);
-setupLogging(io, sqliteDB, mqttHandler); // mqttHandler wird übergeben
+setupLogging(io, sqliteDB, mqttHandler);
 
 const PORT = 3001;
 server.listen(PORT, () => {

@@ -1,58 +1,53 @@
-// src/index.js
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { ConfigProvider } from 'antd';
+import { ConfigProvider, theme } from 'antd';
 import { UserProvider } from './UserContext';
 import App from './App';
 import 'antd/dist/reset.css';
 import './index.css';
 import './i18n';
 
-const darkTheme = {
-  token: {
-    colorPrimary: '#ffb000',       // Primäre Farbe
-    colorBgBase: '#000',           // Basis-Hintergrundfarbe
-    colorTextBase: '#fff',         // Basis-Textfarbe
-    colorBorder: '#434343',        // Rahmenfarbe
-    colorBgContainer: '#141414',   // Hintergrund für Container
-    // colorTextSecondary: '#d9d9d9', // Sekundäre Textfarbe
-    fontSize: 14,                  // Basis-Schriftgröße
-    borderRadius: 4,               // Abgerundete Ecken
-    
-  },
-  components: {
-    
-    Menu: {
-      itemBg: '#383838',           // Hintergrund für Menüpunkte
-      itemColor: '#fff',           // Textfarbe für Menüpunkte
-      itemHoverBg: 'none',      // Hover-Hintergrund
-      itemHoverColor: '#fff',      // Hover-Textfarbe
-      itemSelectedBg: '#ffb000',   // Ausgewählter Hintergrund
-      itemSelectedColor: '#fff',   // Ausgewählte Textfarbe
-    },
-    Button: {
-      colorPrimary: '#ffb000',     // Primäre Button-Farbe
-      colorPrimaryHover: '#7e7e7e', // Hover-Farbe
-      defaultBg:'#333333'
-
-
-    },
-    
-    Layout: {
-      headerBg: '#383838',         // Header-Hintergrund
-      footerBg: '#383838',         // Footer-Hintergrund
-      bodyBg: '#000',              // Body-Hintergrund
-    },
-  },
-};
-
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <UserProvider>
-    <ConfigProvider theme={darkTheme}>
-      <App />
-    </ConfigProvider>
+      <ConfigProvider
+        theme={{
+          algorithm: theme.darkAlgorithm, // Aktiviert das dunkle Theme von Ant Design
+          "token": {
+    "colorPrimary": "#ffb000",
+    "colorInfo": "#ffb000"
+  },
+  "components": {
+
+    "Button": {
+      "algorithm": true,
+      "defaultActiveBorderColor": "rgb(255,176,0)",
+      "defaultActiveColor": "rgb(255,176,0)",
+      "defaultHoverBorderColor": "rgba(64,150,255,0)",
+      "defaultHoverColor": "rgba(64,150,255,0)",
+      "groupBorderColor": "rgb(255,176,0)"
+    },
+    Menu: {
+      itemBg: '#383838',           // Hintergrund für Menüpunkte
+      itemColor: '#fff',           // Textfarbe für Menüpunkte
+      itemHoverBg: 'none',         // Hover-Hintergrund
+      itemHoverColor: '#fff',      // Hover-Textfarbe
+      itemSelectedBg: '#ffb000',   // Ausgewählter Hintergrund
+      itemSelectedColor: '#fff',   // Ausgewählte Textfarbe
+    },
+    Layout: {
+      "algorithm": true,
+      headerBg: '#383838',         // Header-Hintergrund
+      footerBg: '#383838',         // Footer-Hintergrund
+      bodyBg: '#000',              // Body-Hintergrund
+    },
+    
+  },
+        }}
+      >
+        <App />
+      </ConfigProvider>
     </UserProvider>
   </React.StrictMode>
 );

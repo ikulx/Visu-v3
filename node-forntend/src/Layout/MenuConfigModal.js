@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import {  Modal,  Tabs,  Form,  Input,  Button,  Select,  Switch,  Tree,  message,  Divider,  Table} from 'antd';
-import {  PlusOutlined,  DeleteOutlined,  CopyOutlined, LineChartOutlined} from '@ant-design/icons';
-import socket from '../socket'; // Socket.IO-Instanz
+import { Modal, Tabs, Form, Input, Button, Select, Switch, Tree, message, Divider, Table } from 'antd';
+import { PlusOutlined, DeleteOutlined, CopyOutlined, SaveOutlined } from '@ant-design/icons';
+import socket from '../socket';
 import { useTranslation } from 'react-i18next';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
+
+// 20 vordefinierte Farben
+const predefinedColors = [
+  '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#800080', '#008000', '#FFC0CB',
+  '#A52A2A', '#808080', '#FFD700', '#C0C0C0', '#40E0D0', '#FF4500', '#DA70D6', '#7FFF00', '#4682B4', '#F0E68C',
+];
 
 const MenuConfigModal = ({ visible, onClose }) => {
   const { t } = useTranslation();
@@ -13,6 +19,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
   const [menuData, setMenuData] = useState({ menuItems: [] });
   const [selectedNode, setSelectedNode] = useState(null);
   const [loggingSettings, setLoggingSettings] = useState([]);
+  const [tempLoggingSettings, setTempLoggingSettings] = useState([]); // Temporärer Zustand für Änderungen
   const [newTopic, setNewTopic] = useState('');
 
   // Daten anfordern, wenn das Modal geöffnet wird
@@ -50,6 +57,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const onLoggingSettingsUpdate = (data) => {
       setLoggingSettings(data);
+      setTempLoggingSettings(data); // Initialisiere temporäre Einstellungen mit den Server-Daten
     };
 
     socket.on('menu-config-update', onMenuConfigUpdate);
@@ -90,31 +98,30 @@ const MenuConfigModal = ({ visible, onClose }) => {
       label: labelField,
       link: node.link,
       svg: node.svg,
-      enable: node.enable === "true" || node.enable === true,
+      enable: node.enable === 'true' || node.enable === true,
       qhmiVariable: node.qhmiVariable,
       svgConditions: node.svgConditions || [],
       properties: Object.entries(node.properties || {}).map(([key, value]) => ({
         key,
         value: typeof value === 'object' ? value.value : value,
         source_type: typeof value === 'object' ? value.source_type : 'static',
-        source_key: typeof value === 'object' ? value.source_key || '' : ''
+        source_key: typeof value === 'object' ? value.source_key || '' : '',
       })),
       actions: Object.entries(node.actions || {}).map(([actionName, qhmiNames]) => ({
         actionName,
-        qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames]
-      }))
+        qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames],
+      })),
     });
   };
 
   const generateTreeData = (items) => {
     return items.map(item => {
-      const labelText =
-        typeof item.label === 'object' ? item.label.value : item.label;
+      const labelText = typeof item.label === 'object' ? item.label.value : item.label;
       return {
         title: `${labelText} (${item.link || '-'})`,
         key: item.link || labelText,
-        children: (item.sub && item.sub.length > 0) ? generateTreeData(item.sub) : [],
-        itemData: item
+        children: item.sub && item.sub.length > 0 ? generateTreeData(item.sub) : [],
+        itemData: item,
       };
     });
   };
@@ -157,13 +164,12 @@ const MenuConfigModal = ({ visible, onClose }) => {
       actions: values.actions.reduce((acc, action) => {
         acc[action.actionName] = action.qhmiNames;
         return acc;
-      }, {})
+      }, {}),
     };
 
     const updateMenu = (items) => {
       return items.map(item => {
-        const currentLabel =
-          typeof item.label === 'object' ? item.label.value : item.label;
+        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
         const selectedLabel =
           typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
         if (item.link === selectedNode.link && currentLabel === selectedLabel) {
@@ -190,7 +196,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
       svgConditions: [],
       properties: {},
       actions: {},
-      sub: []
+      sub: [],
     };
     const updatedMenu = { menuItems: [...menuData.menuItems, newItem] };
     setMenuData(updatedMenu);
@@ -211,13 +217,12 @@ const MenuConfigModal = ({ visible, onClose }) => {
       svgConditions: [],
       properties: {},
       actions: {},
-      sub: []
+      sub: [],
     };
 
     const addSubMenuToNode = (items) => {
       return items.map(item => {
-        const currentLabel =
-          typeof item.label === 'object' ? item.label.value : item.label;
+        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
         const selectedLabel =
           typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
         if (item.link === selectedNode.link && currentLabel === selectedLabel) {
@@ -258,8 +263,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
     const duplicateInList = (items) => {
       return items.flatMap(item => {
         let arr = [item];
-        const currentLabel =
-          typeof item.label === 'object' ? item.label.value : item.label;
+        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
         const selectedLabel =
           typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
         if (item.link === selectedNode.link && currentLabel === selectedLabel) {
@@ -287,8 +291,7 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const deleteFromMenu = (items) => {
       return items.filter(item => {
-        const currentLabel =
-          typeof item.label === 'object' ? item.label.value : item.label;
+        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
         const selectedLabel =
           typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
         if (item.link === selectedNode.link && currentLabel === selectedLabel) {
@@ -311,37 +314,155 @@ const MenuConfigModal = ({ visible, onClose }) => {
   // Logging-Einstellungen Funktionen
   const handleAddLoggingSetting = () => {
     if (newTopic.trim()) {
-      socket.emit('update-logging-setting', { topic: newTopic, enabled: true });
+      const newSetting = {
+        topic: newTopic,
+        enabled: true,
+        color: predefinedColors[0],
+        page: '',
+        description: '',
+        unit: '°C',
+      };
+      setTempLoggingSettings([...tempLoggingSettings, newSetting]);
       setNewTopic('');
     }
   };
 
   const handleToggleLoggingSetting = (topic, enabled) => {
-    socket.emit('update-logging-setting', { topic, enabled: !enabled });
+    const updatedSettings = tempLoggingSettings.map(setting =>
+      setting.topic === topic ? { ...setting, enabled: !enabled } : setting
+    );
+    setTempLoggingSettings(updatedSettings);
   };
 
-  const loggingColumns = [
-    {
-      title: t('Topic'),
-      dataIndex: 'topic',
-      key: 'topic',
-    },
-    {
-      title: t('Enabled'),
-      dataIndex: 'enabled',
-      key: 'enabled',
-      render: (enabled, record) => (
-        <Button onClick={() => handleToggleLoggingSetting(record.topic, enabled)}>
-          {enabled ? t('Disable') : t('Enable')}
-        </Button>
-      ),
-    },
-    {
-      title: t('Description'),
-      dataIndex: 'description',
-      key: 'description',
-    },
-  ];
+  const handleColorChange = (topic, color) => {
+    const updatedSettings = tempLoggingSettings.map(setting =>
+      setting.topic === topic ? { ...setting, color } : setting
+    );
+    setTempLoggingSettings(updatedSettings);
+  };
+
+  const handlePageChange = (topic, page) => {
+    const updatedSettings = tempLoggingSettings.map(setting =>
+      setting.topic === topic ? { ...setting, page } : setting
+    );
+    setTempLoggingSettings(updatedSettings);
+  };
+
+  const handleDescriptionChange = (topic, description) => {
+    const updatedSettings = tempLoggingSettings.map(setting =>
+      setting.topic === topic ? { ...setting, description } : setting
+    );
+    setTempLoggingSettings(updatedSettings);
+  };
+
+  const handleUnitChange = (topic, unit) => {
+    const updatedSettings = tempLoggingSettings.map(setting =>
+      setting.topic === topic ? { ...setting, unit } : setting
+    );
+    setTempLoggingSettings(updatedSettings);
+  };
+
+  const handleSaveLoggingSettings = () => {
+    // Sende alle temporären Einstellungen an den Server
+    tempLoggingSettings.forEach(setting => {
+      socket.emit('update-logging-setting', {
+        topic: setting.topic,
+        enabled: setting.enabled,
+        color: setting.color,
+        page: setting.page,
+        description: setting.description,
+        unit: setting.unit,
+      });
+    });
+    message.success(t('loggingSettingsSaved'));
+  };
+
+  // Generiere die Baumstruktur für die Logging-Einstellungen
+  const generateLoggingTreeData = () => {
+    // Gruppiere die Einstellungen nach Seiten
+    const pageMap = {};
+
+    tempLoggingSettings.forEach(setting => {
+      const pages = setting.page ? setting.page.split(',').map(p => p.trim()) : ['Ohne Seite'];
+      pages.forEach(page => {
+        if (!pageMap[page]) {
+          pageMap[page] = [];
+        }
+        pageMap[page].push(setting);
+      });
+    });
+
+    // Erstelle die Baumstruktur
+    return Object.keys(pageMap)
+      .sort() // Sortiere die Seiten alphabetisch
+      .map(page => ({
+        title: page,
+        key: `page-${page}`,
+        children: pageMap[page].map(setting => ({
+          title: (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span>{setting.topic}</span>
+              <Button
+                size="small"
+                onClick={() => handleToggleLoggingSetting(setting.topic, setting.enabled)}
+              >
+                {setting.enabled ? t('Disable') : t('Enable')}
+              </Button>
+              <Select
+                size="small"
+                value={setting.color || predefinedColors[0]}
+                onChange={(value) => handleColorChange(setting.topic, value)}
+                style={{ width: 120 }}
+              >
+                {predefinedColors.map((colorOption) => (
+                  <Option key={colorOption} value={colorOption}>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <div
+                        style={{
+                          width: 16,
+                          height: 16,
+                          backgroundColor: colorOption,
+                          marginRight: 8,
+                          border: '1px solid #434343',
+                        }}
+                      />
+                      {colorOption}
+                    </div>
+                  </Option>
+                ))}
+              </Select>
+              <Input
+                size="small"
+                value={setting.page || ''}
+                onChange={(e) => handlePageChange(setting.topic, e.target.value)}
+                placeholder="z. B. hg01,hg02"
+                style={{ width: 150 }}
+              />
+              <Input
+                size="small"
+                value={setting.description || ''}
+                onChange={(e) => handleDescriptionChange(setting.topic, e.target.value)}
+                placeholder="Beschreibung"
+                style={{ width: 150 }}
+              />
+              <Select
+                size="small"
+                value={setting.unit || '°C'}
+                onChange={(value) => handleUnitChange(setting.topic, value)}
+                style={{ width: 80 }}
+              >
+                <Option value="°C">°C</Option>
+                <Option value="%">%</Option>
+              </Select>
+            </div>
+          ),
+          key: `topic-${setting.topic}`,
+          isLeaf: true,
+        })),
+      }));
+  };
+
+  const loggingTreeData = generateLoggingTreeData();
 
   return (
     <Modal
@@ -613,14 +734,22 @@ const MenuConfigModal = ({ visible, onClose }) => {
               </Button>
             </Form.Item>
           </Form>
-          <Table
-            dataSource={loggingSettings}
-            columns={loggingColumns}
-            rowKey="topic"
-            pagination={false}
-            scroll={{ y: '50vh' }}
-            style={{ backgroundColor: '#1f1f1f', color: '#fff' }}
+          <Tree
+            treeData={loggingTreeData}
+            defaultExpandAll
+            height={400}
+            style={{ backgroundColor: '#1f1f1f', color: '#fff', padding: '10px' }}
           />
+          <div style={{ marginTop: '20px', textAlign: 'right' }}>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={handleSaveLoggingSettings}
+              style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
+            >
+              {t('Save')}
+            </Button>
+          </div>
         </TabPane>
       </Tabs>
     </Modal>

@@ -1,4 +1,3 @@
-// src/FooterComponent.js
 import React, { useEffect, useState } from 'react';
 import { Row, Col, Typography, Button } from 'antd';
 import { useLocation } from 'react-router-dom';
@@ -9,7 +8,7 @@ import {
   WarningOutlined, 
   LineChartOutlined 
 } from '@ant-design/icons';
-import ChartPopup from '../ChartPopup'; // Neue Komponente importieren
+import ChartPopup from '../ChartPopup';
 import './FooterComponent.css';
 
 const { Text } = Typography;
@@ -17,8 +16,13 @@ const { Text } = Typography;
 const FooterComponent = () => {
   const [footerData, setFooterData] = useState({ temperature: '–', alarmButton: 0 });
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [chartVisible, setChartVisible] = useState(false); // State für Popup-Sichtbarkeit
+  const [chartVisible, setChartVisible] = useState(false);
   const location = useLocation();
+
+  // Aktuelle Seite bestimmen (ohne führenden Schrägstrich)
+  const currentPage = location.pathname.startsWith('/')
+    ? location.pathname.substring(1)
+    : location.pathname;
 
   useEffect(() => {
     const socket = io(`http://${window.location.hostname}:3001`);
@@ -50,13 +54,11 @@ const FooterComponent = () => {
   };
 
   const handleChartClick = () => {
-    setChartVisible(true); // Popup öffnen
+    setChartVisible(true);
   };
 
-  // Umwandlung in Zahl, falls notwendig
   const alarmVal = Number(footerData.alarmButton);
 
-  // Dynamische Icon-Auswahl für den ersten Button
   const getDynamicIcon = () => {
     if (alarmVal === 1 || alarmVal === 11) {
       return <CheckCircleOutlined style={{ fontSize: '32px', color: '#52c41a' }} />;
@@ -127,8 +129,12 @@ const FooterComponent = () => {
         </div>
       </Col>
 
-      {/* Chart Popup */}
-      <ChartPopup visible={chartVisible} onClose={() => setChartVisible(false)} />
+      {/* Chart Popup mit currentPage */}
+      <ChartPopup
+        visible={chartVisible}
+        onClose={() => setChartVisible(false)}
+        currentPage={currentPage}
+      />
     </Row>
   );
 };
