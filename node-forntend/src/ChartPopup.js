@@ -472,9 +472,10 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             >
               <Option value={50}>50</Option>
               <Option value={100}>100</Option>
-              <Option value={150}>150</Option>
               <Option value={200}>200</Option>
-              <Option value={250}>250</Option>
+              <Option value={500}>500</Option>
+              <Option value={1000}>1000</Option>
+              
             </Select>
           </div>
         </Space>
