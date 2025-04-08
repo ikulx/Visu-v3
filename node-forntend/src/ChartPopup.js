@@ -1,10 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, DatePicker, Button, Space, message, Select } from 'antd';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import 'chartjs-adapter-date-fns';
 import socket from './socket';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
+
+ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Title, Tooltip, Legend);
 
 dayjs.extend(customParseFormat);
 
@@ -132,9 +145,12 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     };
   }, []);
 
-  // Zentrale Funktion zum Abrufen der Daten
+  // Zentrale Funktion zum Abrufen der Daten (ohne Abhängigkeiten)
   const fetchData = useCallback(() => {
-    if (!shouldFetchData.current) return;
+    if (!shouldFetchData.current) {
+      console.log('Datenabruf abgebrochen: shouldFetchData ist false');
+      return;
+    }
 
     if (!startTime) {
       message.error('Bitte wählen Sie eine Startzeit aus.');
@@ -162,9 +178,9 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       maxPoints: maxPoints,
       page: currentPage,
     };
-    console.log('Sende Daten an Socket:', params);
+    console.log('Sende Datenanfrage an Socket:', params);
     socket.emit('request-chart-data', params);
-  }, [startTime, endTime, isLiveMode, maxPoints, currentPage]);
+  }, []);
 
   // Automatische Aktualisierung im Echtzeit-Modus
   useEffect(() => {
@@ -182,7 +198,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         intervalIdRef.current = null;
       }
     };
-  }, [visible, isLiveMode, fetchData]);
+  }, [visible, isLiveMode]);
 
   // Initiale Datenanfrage und Reset beim Öffnen/Schließen des Popups
   useEffect(() => {
@@ -195,7 +211,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       fetchData();
       hasRequestedInitialData.current = true;
     } else if (!visible) {
-      // Zustandsänderungen bündeln
       const now = dayjs();
       setChartData([]);
       setSelectedInterval('1h');
@@ -211,7 +226,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         intervalIdRef.current = null;
       }
     }
-  }, [visible, fetchData]);
+  }, [visible]);
 
   const setIntervalRange = (interval) => {
     const now = dayjs();
@@ -307,92 +322,231 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     fetchData();
   };
 
-  const formatTimeTick = (timestamp) => {
-    const date = new Date(timestamp);
-    const hours = date.getHours();
-    const minutes = date.getMinutes();
-    const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-    const diffDays = endTime.diff(startTime, 'day');
-    const diffHours = endTime.diff(startTime, 'hour');
-
-    if (diffDays >= 7) {
-      const day = date.getDate();
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${day}.${month}`;
-    } else if (diffDays >= 1) {
-      const day = date.getDate();
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${day}.${month} ${formattedTime}`;
-    } else if (diffHours >= 1) {
-      return formattedTime;
-    } else {
-      const seconds = date.getSeconds();
-      return `${formattedTime}:${seconds.toString().padStart(2, '0')}`;
+  // Daten für Chart.js formatieren
+  const prepareChartData = () => {
+    if (!chartData || chartData.length === 0) {
+      console.log('Keine Daten für Chart.js verfügbar');
+      return {
+        datasets: [],
+      };
     }
+
+    const topics = Object.keys(chartData[0]).filter(key => key !== 'timestamp');
+    console.log('Verfügbare Topics:', topics);
+    console.log('Aktuelle visibleLines:', visibleLines);
+
+    const datasets = topics
+      .filter(topic => {
+        const isVisible = visibleLines[topic] !== false;
+        console.log(`Topic ${topic} sichtbar: ${isVisible}`);
+        return isVisible;
+      })
+      .map(topic => {
+        const setting = loggingSettings.find(s => s.topic === topic);
+        const color = setting && setting.color ? setting.color : '#ffffff';
+        const unit = setting ? setting.unit : '°C';
+        const yAxisID = unit === '°C' ? 'yLeft' : 'yRight';
+
+        const data = chartData
+          .map(item => ({
+            x: item.timestamp,
+            y: item[topic],
+          }))
+          .filter(point => {
+            const isValid = typeof point.x === 'number' && !isNaN(point.x) && point.y != null && !isNaN(point.y);
+            if (!isValid) {
+              console.log(`Ungültiger Datenpunkt für Topic ${topic}:`, point);
+            }
+            return isValid;
+          });
+
+        console.log(`Daten für Topic ${topic}:`, data);
+
+        return {
+          label: setting && setting.description ? setting.description : topic,
+          data: data,
+          borderColor: color,
+          backgroundColor: color,
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 0,
+          yAxisID: yAxisID,
+        };
+      })
+      .filter(dataset => dataset.data.length > 0); // Entferne Datasets ohne gültige Daten
+
+    console.log('Erstellte Datasets für Chart.js:', datasets);
+
+    return {
+      datasets,
+    };
   };
 
-  const getTickCount = () => {
-    const dataLength = chartData.length;
-    const tickCount = Math.max(5, Math.min(10, Math.floor(dataLength / 10)));
-    return tickCount;
-  };
-
-  const handleLegendClick = (topic) => {
-    setVisibleLines(prev => ({
-      ...prev,
-      [topic]: !prev[topic],
-    }));
-  };
-
-  const renderLegend = () => {
-    const topics = chartData.length > 0
-      ? Object.keys(chartData[0]).filter(key => key !== 'timestamp')
-      : [];
-
-    return (
-      <ul
-        style={{
-          listStyle: 'none',
-          padding: 0,
-          margin: 0,
+  // Chart.js-Optionen mit vollständiger Deaktivierung aller Animationen
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: {
+      duration: 0,
+    },
+    transitions: {
+      active: {
+        animation: {
+          duration: 0,
+        },
+      },
+      show: {
+        animation: {
+          duration: 0,
+        },
+      },
+      hide: {
+        animation: {
+          duration: 0,
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: endTime.diff(startTime, 'day') >= 7 ? 'day' :
+                endTime.diff(startTime, 'day') >= 1 ? 'hour' :
+                endTime.diff(startTime, 'hour') >= 1 ? 'minute' : 'second',
+          displayFormats: {
+            second: 'HH:mm:ss',
+            minute: 'HH:mm',
+            hour: 'DD.MM HH:mm',
+            day: 'DD.MM',
+          },
+        },
+        ticks: {
+          maxTicksLimit: 10,
           color: '#fff',
-          fontSize: windowDimensions.width < 768 ? 12 : 14,
-          maxWidth: windowDimensions.width < 768 ? 80 : 120,
-          overflow: 'hidden',
-        }}
-      >
-        {topics.map((topic, index) => {
-          const setting = loggingSettings.find(s => s.topic === topic);
-          const label = setting && setting.description ? setting.description : topic;
-          const color = setting && setting.color ? setting.color : '#ffffff';
-          const isVisible = visibleLines[topic];
-          return (
-            <li
-              key={`item-${index}`}
-              onClick={() => handleLegendClick(topic)}
-              style={{
-                cursor: 'pointer',
-                opacity: isVisible ? 1 : 0.5,
-                marginBottom: 5,
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 10,
-                  height: 10,
-                  backgroundColor: color,
-                  marginRight: 5,
-                }}
-              />
-              {label}
-            </li>
-          );
-        })}
-      </ul>
-    );
+          font: {
+            size: windowDimensions.width < 768 ? 12 : 16,
+          },
+        },
+        grid: {
+          display: false,
+        },
+      },
+      yLeft: {
+        position: 'left',
+        title: {
+          display: true,
+          text: '°C',
+          color: '#fff',
+          font: {
+            size: 16,
+          },
+        },
+        ticks: {
+          color: '#fff',
+          font: {
+            size: windowDimensions.width < 768 ? 12 : 16,
+          },
+        },
+        grid: {
+          color: '#444',
+          borderDash: [3, 3],
+        },
+      },
+      yRight: {
+        position: 'right',
+        title: {
+          display: true,
+          text: '%',
+          color: '#fff',
+          font: {
+            size: 16,
+          },
+        },
+        ticks: {
+          color: '#fff',
+          font: {
+            size: windowDimensions.width < 768 ? 12 : 16,
+          },
+        },
+        grid: {
+          display: false,
+        },
+      },
+    },
+    plugins: {
+      legend: {
+        position: 'right',
+        labels: {
+          color: '#fff',
+          font: {
+            size: windowDimensions.width < 768 ? 12 : 14,
+          },
+          boxWidth: 10,
+          boxHeight: 10,
+          padding: 5,
+          filter: (legendItem) => {
+            return visibleLines[legendItem.text] !== false;
+          },
+        },
+        onClick: (e, legendItem) => {
+          setVisibleLines(prev => ({
+            ...prev,
+            [legendItem.text]: !prev[legendItem.text],
+          }));
+        },
+      },
+      tooltip: {
+        animation: {
+          duration: 0,
+        },
+        backgroundColor: '#333',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        callbacks: {
+          label: (context) => {
+            const topic = context.dataset.label;
+            const setting = loggingSettings.find(s => (s.description || s.topic) === topic);
+            const unit = setting ? setting.unit : '°C';
+            return `${topic}: ${context.parsed.y} ${unit}`;
+          },
+          title: (tooltipItems) => {
+            const timestamp = tooltipItems[0].parsed.x;
+            const date = new Date(timestamp);
+            const hours = date.getHours();
+            const minutes = date.getMinutes();
+            const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+            const diffDays = endTime.diff(startTime, 'day');
+            const diffHours = endTime.diff(startTime, 'hour');
+
+            if (diffDays >= 7) {
+              const day = date.getDate();
+              const month = (date.getMonth() + 1).toString().padStart(2, '0');
+              return `${day}.${month}`;
+            } else if (diffDays >= 1) {
+              const day = date.getDate();
+              const month = (date.getMonth() + 1).toString().padStart(2, '0');
+              return `${day}.${month} ${formattedTime}`;
+            } else if (diffHours >= 1) {
+              return formattedTime;
+            } else {
+              const seconds = date.getSeconds();
+              return `${formattedTime}:${seconds.toString().padStart(2, '0')}`;
+            }
+          },
+        },
+      },
+    },
+    hover: {
+      animationDuration: 0,
+    },
+    elements: {
+      line: {
+        tension: 0,
+      },
+      point: {
+        radius: 0,
+      },
+    },
   };
 
   const controlHeight = windowDimensions.width < 768 ? 140 : 100;
@@ -590,83 +744,9 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             Keine Daten verfügbar
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            <LineChart
-              data={chartData}
-              margin={{
-                top: 20,
-                right: windowDimensions.width < 768 ? 80 : 120,
-                left: 20,
-                bottom: 40,
-              }}
-              isAnimationActive={false}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-              <XAxis
-                dataKey="timestamp"
-                stroke="#fff"
-                tickFormatter={formatTimeTick}
-                tick={{ fill: '#fff', fontSize: windowDimensions.width < 768 ? 12 : 16, dy: 10 }}
-                tickCount={getTickCount()}
-                angle={windowDimensions.width < 768 ? -90 : -45}
-                textAnchor="end"
-                height={60}
-              />
-              <YAxis
-                yAxisId="left"
-                stroke="#fff"
-                tick={{ fill: '#fff', fontSize: windowDimensions.width < 768 ? 12 : 16 }}
-                domain={['auto', 'auto']}
-                width={windowDimensions.width < 768 ? 40 : 60}
-                label={{ value: '°C', angle: -90, position: 'insideLeft', fill: '#fff', fontSize: 16 }}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                stroke="#fff"
-                tick={{ fill: '#fff', fontSize: windowDimensions.width < 768 ? 12 : 16 }}
-                domain={['auto', 'auto']}
-                width={windowDimensions.width < 768 ? 40 : 60}
-                label={{ value: '%', angle: 90, position: 'insideRight', fill: '#fff', fontSize: 16 }}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#333', border: 'none', color: '#fff' }}
-                labelFormatter={formatTimeTick}
-                formatter={(value, name) => {
-                  const setting = loggingSettings.find(s => s.topic === name);
-                  const unit = setting ? setting.unit : '°C';
-                  return [`${value} ${unit}`, setting ? setting.description : name];
-                }}
-              />
-              <Legend
-                layout="vertical"
-                align="right"
-                verticalAlign="middle"
-                content={renderLegend}
-              />
-              {Object.keys(chartData[0] || {})
-                .filter(key => key !== 'timestamp')
-                .map(topic => {
-                  const setting = loggingSettings.find(s => s.topic === topic);
-                  const color = setting && setting.color ? setting.color : '#ffffff';
-                  const unit = setting ? setting.unit : '°C';
-                  const yAxisId = unit === '°C' ? 'left' : 'right';
-                  if (!visibleLines[topic]) return null;
-                  console.log(`Rendere Linie für Topic: ${topic}, Farbe: ${color}, Y-Achse: ${yAxisId}`);
-                  return (
-                    <Line
-                      key={topic}
-                      type="monotone"
-                      dataKey={topic}
-                      stroke={color}
-                      strokeWidth={2}
-                      connectNulls={true}
-                      yAxisId={yAxisId}
-                    />
-                  );
-                })}
-            </LineChart>
-          </ResponsiveContainer>
+          <div style={{ height: chartHeight, padding: '20px' }}>
+            <Line data={prepareChartData()} options={chartOptions} />
+          </div>
         )}
       </div>
     </Modal>

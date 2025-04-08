@@ -211,7 +211,7 @@ class LoggingHandler {
       // Sortiere die Daten aufsteigend nach Zeitstempel für das Frontend
       data.sort((a, b) => a.time - b.time);
 
-      console.log('Abgerufene Daten:', data);
+      // console.log('Abgerufene Daten:', data);
       if (data.length === 0) {
         console.warn('Keine Daten zurückgegeben von InfluxDB');
       }
