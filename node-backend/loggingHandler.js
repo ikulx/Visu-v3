@@ -75,7 +75,6 @@ class LoggingHandler {
       if (values.length === 0) continue;
 
       const average = values.reduce((sum, val) => sum + val, 0) / values.length;
-      // Runde den Durchschnitt auf eine Nachkommastelle
       const roundedAverage = parseFloat(average.toFixed(1));
       const point = new Point('mqtt_logs')
         .tag('topic', topic)
@@ -96,73 +95,62 @@ class LoggingHandler {
     this.valueCache.clear();
   }
 
-  async updateLoggingSettings(topic, enabled, color, page, description, unit) {
+  async updatePagesAndSettings({ pages, settings }) {
     try {
       await new Promise((resolve, reject) => {
-        this.sqliteDB.run(
-          `INSERT OR REPLACE INTO logging_settings (topic, enabled, color, page, description, unit, updated_at) 
-           VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
-          [topic, enabled ? 1 : 0, color, page, description, unit],
-          (err) => (err ? reject(err) : resolve())
-        );
+        this.sqliteDB.run('DELETE FROM logging_settings', [], (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
       });
 
-      if (enabled) {
-        this.activeTopics.add(topic);
-      } else {
-        this.activeTopics.delete(topic);
-        this.valueCache.delete(topic);
+      for (const setting of settings) {
+        await new Promise((resolve, reject) => {
+          this.sqliteDB.run(
+            `INSERT OR REPLACE INTO logging_settings (topic, enabled, color, page, description, unit, updated_at) 
+             VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
+            [setting.topic, setting.enabled ? 1 : 0, setting.color, setting.page, setting.description, setting.unit],
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
       }
+
+      this.activeTopics.clear();
+      this.valueCache.clear();
+      settings.forEach(setting => {
+        if (setting.enabled) {
+          this.activeTopics.add(setting.topic);
+        }
+      });
 
       this.broadcastSettings();
     } catch (err) {
-      console.error('Fehler beim Aktualisieren der Logging-Einstellungen:', err);
+      console.error('Fehler beim Aktualisieren der Seiten und Logging-Einstellungen:', err);
     }
   }
 
   broadcastSettings() {
     this.sqliteDB.all(
-      'SELECT topic, enabled, color, page, description, unit FROM logging_settings',
+      'SELECT topic, enabled, color, page, description, unit FROM logging_settings ORDER BY page ASC',
       [],
       (err, rows) => {
         if (err) {
           console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
           return;
         }
+        console.log('Broadcasting logging settings:', rows);
         this.io.emit('logging-settings-update', rows);
       }
     );
   }
 
-  async fetchChartData(socket, { start, end, maxPoints, page }) {
+  async fetchChartData(socket, { start = '-1h', end = 'now()', maxPoints = 50, page }) {
     console.log('Erhaltene Parameter:', { start, end, maxPoints, page });
-    console.log('Aktive Topics:', this.activeTopics);
-
-    if (!start || !end) {
-      socket.emit('chart-data-error', { message: 'Start- oder Enddatum fehlt' });
-      return;
-    }
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      socket.emit('chart-data-error', { message: 'Ungültige Datumsangaben' });
-      return;
-    }
-    if (!maxPoints || maxPoints <= 0 || isNaN(maxPoints)) {
-      socket.emit('chart-data-error', { message: 'Ungültige maxPoints' });
-      return;
-    }
-
-    const durationMs = endDate - startDate;
-    if (durationMs <= 0) {
-      socket.emit('chart-data-error', { message: 'Enddatum muss nach Startdatum liegen' });
-      return;
-    }
-
-    const intervalMs = Math.max(1, Math.floor(durationMs / maxPoints));
-    console.log('Berechnetes Intervall:', intervalMs);
-
-    // Topics basierend auf der Seite filtern
+  
+    // Topics aus der SQLite-Datenbank abrufen
     const rows = await new Promise((resolve, reject) => {
       this.sqliteDB.all(
         'SELECT topic, page FROM logging_settings WHERE enabled = 1',
@@ -170,68 +158,82 @@ class LoggingHandler {
         (err, rows) => (err ? reject(err) : resolve(rows))
       );
     });
-
-    console.log('Alle aktiven Logging-Einstellungen:', rows);
-    console.log('Vergleiche mit page:', page);
-
+  
     const filteredTopics = rows
-      .filter(row => {
-        if (!row.page) {
-          console.log(`Topic ${row.topic} hat keine Seiten definiert`);
-          return false;
-        }
-        const pages = row.page.split(',').map(p => p.trim());
-        const isMatch = pages.includes(page);
-        console.log(`Topic ${row.topic} Seiten: ${row.page}, Match mit ${page}: ${isMatch}`);
-        return isMatch;
-      })
+      .filter(row => row.page && row.page.split(',').map(p => p.trim()).includes(page))
       .map(row => row.topic);
-
-    console.log('Gefilterte Topics:', filteredTopics);
-
+  
+    console.log('Gefilterte Topics für Seite', page, ':', filteredTopics);
+  
     if (filteredTopics.length === 0) {
       console.log('Keine passenden Topics gefunden, sende leeres Array');
       socket.emit('chart-data-update', []);
       return;
     }
-
+  
+    // Flux-Abfrage erstellen
     const topicFilter = filteredTopics
-      .filter(topic => topic)
       .map(topic => `r.topic == "${topic}"`)
       .join(' or ');
-
+  
     const fluxQuery = `
       from(bucket: "dev-bucket")
         |> range(start: ${start}, stop: ${end})
         |> filter(fn: (r) => r._measurement == "mqtt_logs")
         |> filter(fn: (r) => r._field == "average")
         ${topicFilter ? `|> filter(fn: (r) => ${topicFilter})` : ''}
-        |> aggregateWindow(every: ${intervalMs}ms, fn: mean, createEmpty: false)
-        |> pivot(rowKey: ["_time"], columnKey: ["topic"], valueColumn: "_value")
         |> sort(columns: ["_time"])
+        |> limit(n: ${maxPoints})
     `;
+  
     console.log('Flux-Abfrage:', fluxQuery);
-
+  
     try {
       const data = [];
       await this.queryApi.collectRows(fluxQuery, (row, tableMeta) => {
         const timestamp = new Date(tableMeta.get(row, '_time')).getTime();
-        const entry = { time: timestamp };
-        filteredTopics.forEach(topic => {
-          const value = tableMeta.get(row, topic);
-          if (value !== undefined && value !== null) {
-            entry[topic] = parseFloat(value);
-          } else {
-            entry[topic] = null;
-          }
-        });
-        data.push(entry);
+        const topic = tableMeta.get(row, 'topic');
+        const value = parseFloat(tableMeta.get(row, '_value'));
+        data.push({ time: timestamp, topic, value });
       });
-
-      console.log('Daten abgerufen:', data);
-      socket.emit('chart-data-update', data);
+  
+      // console.log('Abgerufene Daten (begrenzt auf', maxPoints, 'Punkte):', data);
+  
+      // Zähle die Anzahl der Datenpunkte pro Topic
+      const pointsPerTopic = {};
+      filteredTopics.forEach(topic => {
+        pointsPerTopic[topic] = 0;
+      });
+      data.forEach(item => {
+        if (pointsPerTopic[item.topic] !== undefined) {
+          pointsPerTopic[item.topic]++;
+        }
+      });
+  
+      // Ausgabe in der Konsole
+      console.log('Anzahl der Datenpunkte pro Topic:', pointsPerTopic);
+  
+      // Daten für das Frontend weiterverarbeiten
+      const groupedData = {};
+      data.forEach(({ time, topic, value }) => {
+        if (!groupedData[time]) {
+          groupedData[time] = { time };
+          filteredTopics.forEach(t => {
+            groupedData[time][t] = null;
+          });
+        }
+        groupedData[time][topic] = value;
+      });
+  
+      const formattedData = Object.values(groupedData).sort((a, b) => a.time - b.time);
+  
+      // console.log('Formatierte Daten für Frontend:', formattedData);
+      if (formattedData.length === 0) {
+        console.warn('Keine Daten zurückgegeben von InfluxDB');
+      }
+      socket.emit('chart-data-update', formattedData);
     } catch (error) {
-      console.error('Fehler beim Abrufen der Chart-Daten:', error);
+      console.error('Fehler bei der Abfrage:', error);
       socket.emit('chart-data-error', { message: 'Fehler beim Laden der Daten', error: error.message });
     }
   }
@@ -240,8 +242,8 @@ class LoggingHandler {
     this.io.on('connection', (socket) => {
       console.log('Client verbunden:', socket.id);
 
-      socket.on('update-logging-setting', ({ topic, enabled, color, page, description, unit }) => {
-        this.updateLoggingSettings(topic, enabled, color, page, description, unit);
+      socket.on('update-pages-and-settings', (data) => {
+        this.updatePagesAndSettings(data);
       });
 
       socket.on('request-logging-settings', () => {

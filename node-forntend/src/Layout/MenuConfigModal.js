@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Tabs, Form, Input, Button, Select, Switch, Tree, message, Divider, Table } from 'antd';
+import { Modal, Tabs, Form, Input, Button, Select, Switch, Tree, message, Divider, Table, Popconfirm } from 'antd';
 import { PlusOutlined, DeleteOutlined, CopyOutlined, SaveOutlined } from '@ant-design/icons';
 import socket from '../socket';
 import { useTranslation } from 'react-i18next';
@@ -20,7 +20,11 @@ const MenuConfigModal = ({ visible, onClose }) => {
   const [selectedNode, setSelectedNode] = useState(null);
   const [loggingSettings, setLoggingSettings] = useState([]);
   const [tempLoggingSettings, setTempLoggingSettings] = useState([]); // Temporärer Zustand für Änderungen
-  const [newTopic, setNewTopic] = useState('');
+  const [pages, setPages] = useState([]); // Zustand für die definierten Seiten
+  const [tempPages, setTempPages] = useState([]); // Temporärer Zustand für Seiten
+  const [newPage, setNewPage] = useState(''); // Eingabe für neue Seite
+  const [newTopic, setNewTopic] = useState(''); // Eingabe für neues Topic
+  const [selectedPageForTopic, setSelectedPageForTopic] = useState(null); // Ausgewählte Seite für neues Topic
 
   // Daten anfordern, wenn das Modal geöffnet wird
   useEffect(() => {
@@ -57,7 +61,15 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
     const onLoggingSettingsUpdate = (data) => {
       setLoggingSettings(data);
-      setTempLoggingSettings(data); // Initialisiere temporäre Einstellungen mit den Server-Daten
+      setTempLoggingSettings(data);
+      // Extrahiere die einzigartigen Seiten aus den Logging-Einstellungen
+      const uniquePages = [...new Set(
+        data
+          .filter(setting => setting.page)
+          .flatMap(setting => setting.page.split(',').map(p => p.trim()))
+      )];
+      setPages(uniquePages);
+      setTempPages(uniquePages);
     };
 
     socket.on('menu-config-update', onMenuConfigUpdate);
@@ -311,20 +323,68 @@ const MenuConfigModal = ({ visible, onClose }) => {
     form.resetFields();
   };
 
+  // Seitenverwaltung
+  const handleAddPage = () => {
+    if (newPage.trim() && !tempPages.includes(newPage.trim())) {
+      setTempPages([...tempPages, newPage.trim()]);
+      setNewPage('');
+    } else if (tempPages.includes(newPage.trim())) {
+      message.error(t('pageAlreadyExists'));
+    }
+  };
+
+  const handleDeletePage = (page) => {
+    // Entferne die Seite aus der Liste
+    setTempPages(tempPages.filter(p => p !== page));
+    // Entferne die Seite aus allen Topics
+    const updatedSettings = tempLoggingSettings.map(setting => {
+      if (setting.page) {
+        const pages = setting.page.split(',').map(p => p.trim());
+        const updatedPages = pages.filter(p => p !== page);
+        return { ...setting, page: updatedPages.join(',') };
+      }
+      return setting;
+    });
+    setTempLoggingSettings(updatedSettings);
+  };
+
   // Logging-Einstellungen Funktionen
   const handleAddLoggingSetting = () => {
-    if (newTopic.trim()) {
-      const newSetting = {
-        topic: newTopic,
-        enabled: true,
-        color: predefinedColors[0],
-        page: '',
-        description: '',
-        unit: '°C',
-      };
-      setTempLoggingSettings([...tempLoggingSettings, newSetting]);
+    if (newTopic.trim() && selectedPageForTopic) {
+      const existingSetting = tempLoggingSettings.find(setting => setting.topic === newTopic);
+      if (existingSetting) {
+        // Topic existiert bereits, füge die neue Seite hinzu
+        const currentPages = existingSetting.page ? existingSetting.page.split(',').map(p => p.trim()) : [];
+        if (!currentPages.includes(selectedPageForTopic)) {
+          currentPages.push(selectedPageForTopic);
+          const updatedSettings = tempLoggingSettings.map(setting =>
+            setting.topic === newTopic ? { ...setting, page: currentPages.join(',') } : setting
+          );
+          setTempLoggingSettings(updatedSettings);
+        } else {
+          message.warning(t('topicAlreadyOnPage'));
+        }
+      } else {
+        // Neues Topic
+        const newSetting = {
+          topic: newTopic,
+          enabled: true,
+          color: predefinedColors[0],
+          page: selectedPageForTopic,
+          description: '',
+          unit: '°C',
+        };
+        setTempLoggingSettings([...tempLoggingSettings, newSetting]);
+      }
       setNewTopic('');
+      setSelectedPageForTopic(null);
+    } else {
+      message.error(t('selectPageAndTopic'));
     }
+  };
+
+  const handleDeleteLoggingSetting = (topic) => {
+    setTempLoggingSettings(tempLoggingSettings.filter(setting => setting.topic !== topic));
   };
 
   const handleToggleLoggingSetting = (topic, enabled) => {
@@ -363,106 +423,128 @@ const MenuConfigModal = ({ visible, onClose }) => {
   };
 
   const handleSaveLoggingSettings = () => {
-    // Sende alle temporären Einstellungen an den Server
-    tempLoggingSettings.forEach(setting => {
-      socket.emit('update-logging-setting', {
-        topic: setting.topic,
-        enabled: setting.enabled,
-        color: setting.color,
-        page: setting.page,
-        description: setting.description,
-        unit: setting.unit,
-      });
+    // Sende die Seiten und Logging-Einstellungen an den Server
+    socket.emit('update-pages-and-settings', {
+      pages: tempPages,
+      settings: tempLoggingSettings,
     });
     message.success(t('loggingSettingsSaved'));
   };
 
-  // Generiere die Baumstruktur für die Logging-Einstellungen
-  const generateLoggingTreeData = () => {
-    // Gruppiere die Einstellungen nach Seiten
-    const pageMap = {};
+  // Generiere die Baumstruktur für die Logging-Einstellungen (ohne Sortierung)
+  const generateLoggingTreeData = (settings) => {
+    // Erstelle eine Map, um sicherzustellen, dass jedes Topic nur einmal pro Seite angezeigt wird
+    const pageTopicMap = {};
 
-    tempLoggingSettings.forEach(setting => {
-      const pages = setting.page ? setting.page.split(',').map(p => p.trim()) : ['Ohne Seite'];
+    // Initialisiere die Map für jede Seite
+    tempPages.forEach(page => {
+      pageTopicMap[page] = new Set();
+    });
+
+    // Gruppiere die Einstellungen nach Seiten und stelle sicher, dass ein Topic nur einmal pro Seite angezeigt wird
+    settings.forEach(setting => {
+      const pages = setting.page ? setting.page.split(',').map(p => p.trim()) : [];
       pages.forEach(page => {
-        if (!pageMap[page]) {
-          pageMap[page] = [];
+        if (tempPages.includes(page)) {
+          pageTopicMap[page].add(setting);
         }
-        pageMap[page].push(setting);
       });
     });
 
-    // Erstelle die Baumstruktur
-    return Object.keys(pageMap)
-      .sort() // Sortiere die Seiten alphabetisch
-      .map(page => ({
-        title: page,
-        key: `page-${page}`,
-        children: pageMap[page].map(setting => ({
-          title: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>{setting.topic}</span>
-              <Button
-                size="small"
-                onClick={() => handleToggleLoggingSetting(setting.topic, setting.enabled)}
-              >
-                {setting.enabled ? t('Disable') : t('Enable')}
-              </Button>
-              <Select
-                size="small"
-                value={setting.color || predefinedColors[0]}
-                onChange={(value) => handleColorChange(setting.topic, value)}
-                style={{ width: 120 }}
-              >
-                {predefinedColors.map((colorOption) => (
-                  <Option key={colorOption} value={colorOption}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <div
-                        style={{
-                          width: 16,
-                          height: 16,
-                          backgroundColor: colorOption,
-                          marginRight: 8,
-                          border: '1px solid #434343',
-                        }}
-                      />
-                      {colorOption}
-                    </div>
-                  </Option>
-                ))}
-              </Select>
-              <Input
-                size="small"
-                value={setting.page || ''}
-                onChange={(e) => handlePageChange(setting.topic, e.target.value)}
-                placeholder="z. B. hg01,hg02"
-                style={{ width: 150 }}
-              />
-              <Input
-                size="small"
-                value={setting.description || ''}
-                onChange={(e) => handleDescriptionChange(setting.topic, e.target.value)}
-                placeholder="Beschreibung"
-                style={{ width: 150 }}
-              />
-              <Select
-                size="small"
-                value={setting.unit || '°C'}
-                onChange={(value) => handleUnitChange(setting.topic, value)}
-                style={{ width: 80 }}
-              >
-                <Option value="°C">°C</Option>
-                <Option value="%">%</Option>
-              </Select>
-            </div>
-          ),
-          key: `topic-${setting.topic}`,
-          isLeaf: true,
-        })),
-      }));
+    // Erstelle die Baumstruktur (ohne Sortierung der Seiten)
+    return tempPages.map(page => ({
+      title: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>{page}</span>
+          <Popconfirm
+            title={t('confirmDeletePage')}
+            onConfirm={() => handleDeletePage(page)}
+            okText={t('yes')}
+            cancelText={t('no')}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </div>
+      ),
+      key: `page-${page}`,
+      children: Array.from(pageTopicMap[page] || []).map(setting => ({
+        title: (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>{setting.topic}</span>
+            <Button
+              size="small"
+              onClick={() => handleToggleLoggingSetting(setting.topic, setting.enabled)}
+            >
+              {setting.enabled ? t('Disable') : t('Enable')}
+            </Button>
+            <Select
+              size="small"
+              value={setting.color || predefinedColors[0]}
+              onChange={(value) => handleColorChange(setting.topic, value)}
+              style={{ width: 120 }}
+            >
+              {predefinedColors.map((colorOption) => (
+                <Option key={colorOption} value={colorOption}>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        backgroundColor: colorOption,
+                        marginRight: 8,
+                        border: '1px solid #434343',
+                      }}
+                    />
+                    {colorOption}
+                  </div>
+                </Option>
+              ))}
+            </Select>
+            <Select
+              size="small"
+              value={setting.page ? setting.page.split(',').map(p => p.trim()) : []}
+              onChange={(value) => handlePageChange(setting.topic, value.join(','))}
+              style={{ width: 150 }}
+              mode="multiple"
+            >
+              {tempPages.map(page => (
+                <Option key={page} value={page}>{page}</Option>
+              ))}
+            </Select>
+            <Input
+              size="small"
+              value={setting.description || ''}
+              onChange={(e) => handleDescriptionChange(setting.topic, e.target.value)}
+              placeholder="Beschreibung"
+              style={{ width: 150 }}
+            />
+            <Select
+              size="small"
+              value={setting.unit || '°C'}
+              onChange={(value) => handleUnitChange(setting.topic, value)}
+              style={{ width: 80 }}
+            >
+              <Option value="°C">°C</Option>
+              <Option value="%">%</Option>
+            </Select>
+            <Popconfirm
+              title={t('confirmDeleteTopic')}
+              onConfirm={() => handleDeleteLoggingSetting(setting.topic)}
+              okText={t('yes')}
+              cancelText={t('no')}
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </div>
+        ),
+        key: `topic-${setting.topic}-${page}`, // Eindeutiger Schlüssel pro Topic und Seite
+        isLeaf: true,
+      })),
+    }));
   };
 
-  const loggingTreeData = generateLoggingTreeData();
+  // Verwende tempLoggingSettings für die Anzeige (ohne Sortierung)
+  const loggingTreeData = generateLoggingTreeData(tempLoggingSettings);
 
   return (
     <Modal
@@ -711,6 +793,32 @@ const MenuConfigModal = ({ visible, onClose }) => {
 
         {/* Tab für Logging-Einstellungen */}
         <TabPane tab={t('Logging Settings')} key="2">
+          {/* Eingabe für neue Seite */}
+          <Form
+            layout="inline"
+            onFinish={handleAddPage}
+            style={{ marginBottom: '20px', backgroundColor: '#1f1f1f', padding: '16px', borderRadius: '4px' }}
+          >
+            <Form.Item>
+              <Input
+                placeholder={t('New Page')}
+                value={newPage}
+                onChange={(e) => setNewPage(e.target.value)}
+                style={{ width: '300px', backgroundColor: '#333', color: '#fff', border: '1px solid #434343' }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="primary"
+                htmlType="submit"
+                style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
+              >
+                {t('Add Page')}
+              </Button>
+            </Form.Item>
+          </Form>
+
+          {/* Eingabe für neues Topic */}
           <Form
             layout="inline"
             onFinish={handleAddLoggingSetting}
@@ -725,15 +833,28 @@ const MenuConfigModal = ({ visible, onClose }) => {
               />
             </Form.Item>
             <Form.Item>
+              <Select
+                placeholder={t('Select Page')}
+                value={selectedPageForTopic}
+                onChange={(value) => setSelectedPageForTopic(value)}
+                style={{ width: '200px', backgroundColor: '#333', color: '#fff' }}
+              >
+                {tempPages.map(page => (
+                  <Option key={page} value={page}>{page}</Option>
+                ))}
+              </Select>
+            </Form.Item>
+            <Form.Item>
               <Button
                 type="primary"
                 htmlType="submit"
                 style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
               >
-                {t('Add')}
+                {t('Add Topic')}
               </Button>
             </Form.Item>
           </Form>
+
           <Tree
             treeData={loggingTreeData}
             defaultExpandAll

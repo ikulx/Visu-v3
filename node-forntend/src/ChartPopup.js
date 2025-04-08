@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, DatePicker, Button, Space, message } from 'antd';
+import { Modal, DatePicker, Button, Space, message, Select } from 'antd';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { LeftOutlined, RightOutlined } from '@ant-design/icons';
 import socket from './socket';
@@ -9,17 +9,24 @@ import customParseFormat from 'dayjs/plugin/customParseFormat';
 dayjs.extend(customParseFormat);
 
 const { RangePicker } = DatePicker;
+const { Option } = Select;
 
 const ChartPopup = ({ visible, onClose, currentPage }) => {
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [timeRange, setTimeRange] = useState([
-    dayjs().subtract(1, 'hour'), // Standard: 1 Stunde zurück
-    dayjs(), // Standard: Aktuelle Zeit
-  ]);
-  const [selectedInterval, setSelectedInterval] = useState('1h'); // Standard-Intervall: 1 Stunde
-  const [loggingSettings, setLoggingSettings] = useState([]); // Logging-Einstellungen für Farben, Beschreibung und Einheit
-  const [visibleLines, setVisibleLines] = useState({}); // Zustand für die Sichtbarkeit der Linien
+  const [timeRange, setTimeRange] = useState(() => {
+    const now = dayjs();
+    const start = now.subtract(1, 'hour');
+    console.log('Initialer Zeitbereich:', {
+      start: start.format('YYYY-MM-DD HH:mm:ss'),
+      end: now.format('YYYY-MM-DD HH:mm:ss'),
+    });
+    return [start, now];
+  });
+  const [selectedInterval, setSelectedInterval] = useState('1h');
+  const [maxPoints, setMaxPoints] = useState(50);
+  const [loggingSettings, setLoggingSettings] = useState([]);
+  const [visibleLines, setVisibleLines] = useState({});
   const colors = useRef({});
   const hasRequestedInitialData = useRef(false);
   const [windowDimensions, setWindowDimensions] = useState({
@@ -65,42 +72,65 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       return;
     }
 
+    const now = dayjs();
+    let adjustedStart = start;
+    let adjustedEnd = end;
+    if (end.isAfter(now)) {
+      console.warn('Endzeitpunkt liegt in der Zukunft. Setze auf aktuellen Zeitpunkt.');
+      const duration = end.diff(start);
+      adjustedEnd = now;
+      adjustedStart = adjustedEnd.subtract(duration);
+      setTimeRange([adjustedStart, adjustedEnd]);
+      console.log('Korrigierter Zeitbereich:', {
+        start: adjustedStart.format('YYYY-MM-DD HH:mm:ss'),
+        end: adjustedEnd.format('YYYY-MM-DD HH:mm:ss'),
+      });
+    }
+
     setLoading(true);
     const params = {
-      start: start.toISOString(),
-      end: end.toISOString(),
-      maxPoints: 50,
+      start: adjustedStart.toISOString(),
+      end: adjustedEnd.toISOString(),
+      maxPoints: maxPoints,
       page: currentPage,
     };
-    console.log('Sende Daten an Socket:', params);
+    console.log('Sende Daten an Socket mit maxPoints:', maxPoints, params);
     socket.emit('request-chart-data', params);
   };
 
   useEffect(() => {
     const handleChartDataUpdate = (data) => {
       console.log('Rohdaten vom Socket empfangen:', data);
-      // Daten nach Zeitstempel sortieren
+      if (!data || data.length === 0) {
+        console.log('Keine Daten empfangen, setze chartData auf leeres Array');
+        setChartData([]);
+        setLoading(false);
+        return;
+      }
+
       const sortedData = [...data].sort((a, b) => a.time - b.time);
       const formattedData = sortedData.map(item => {
         const entry = { timestamp: Number(item.time) };
         Object.keys(item).forEach(key => {
           if (key !== 'time') {
-            entry[key] = item[key];
+            entry[key] = item[key] !== null && item[key] !== undefined ? Number(item[key]) : null;
           }
         });
         return entry;
       });
+
+      console.log('Sortierte und formatierte Daten für Diagramm:', formattedData);
+      console.log('Anzahl der Datenpunkte:', formattedData.length);
       setChartData(formattedData);
       setLoading(false);
-      console.log('Sortierte und formatierte Daten für Diagramm:', formattedData);
 
-      // Initialisiere die Sichtbarkeit der Linien
       const initialVisibleLines = {};
       Object.keys(formattedData[0] || {})
         .filter(key => key !== 'timestamp')
         .forEach(topic => {
-          initialVisibleLines[topic] = true; // Standardmäßig sichtbar
+          initialVisibleLines[topic] = true;
         });
+      console.log('Initialisierte sichtbare Linien:', initialVisibleLines);
       setVisibleLines(initialVisibleLines);
     };
 
@@ -113,7 +143,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     const handleLoggingSettingsUpdate = (data) => {
       console.log('Logging-Einstellungen empfangen:', data);
       setLoggingSettings(data);
-      // Farben in colors-Ref speichern
       data.forEach(setting => {
         if (setting.color) {
           colors.current[setting.topic] = setting.color;
@@ -136,6 +165,14 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     };
   }, []);
 
+  // Reagiere auf Änderungen von maxPoints
+  useEffect(() => {
+    if (visible) {
+      console.log('maxPoints geändert, neue Anfrage mit maxPoints:', maxPoints);
+      requestChartData();
+    }
+  }, [maxPoints]);
+
   useEffect(() => {
     if (visible && !hasRequestedInitialData.current) {
       console.log('Popup geöffnet, initiale Zeitpunkte:', {
@@ -147,12 +184,12 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     } else if (!visible) {
       setChartData([]);
       setSelectedInterval('1h');
-      setVisibleLines({}); // Zurücksetzen der Sichtbarkeit
+      setMaxPoints(50);
+      setVisibleLines({});
       hasRequestedInitialData.current = false;
     }
   }, [visible]);
 
-  // Zeitbereich basierend auf Intervall setzen
   const setIntervalRange = (interval) => {
     setSelectedInterval(interval);
     const now = dayjs();
@@ -179,19 +216,18 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     requestChartData(newRange);
   };
 
-  // Zeitbereich verschieben (vorwärts/rückwärts)
   const shiftTimeRange = (direction) => {
     const [start, end] = timeRange;
     let duration;
     switch (selectedInterval) {
       case '1h':
-        duration = 1 * 60 * 60 * 1000; // 1 Stunde in Millisekunden
+        duration = 1 * 60 * 60 * 1000;
         break;
       case '1d':
-        duration = 24 * 60 * 60 * 1000; // 1 Tag in Millisekunden
+        duration = 24 * 60 * 60 * 1000;
         break;
       case '1w':
-        duration = 7 * 24 * 60 * 60 * 1000; // 1 Woche in Millisekunden
+        duration = 7 * 24 * 60 * 60 * 1000;
         break;
       default:
         duration = 1 * 60 * 60 * 1000;
@@ -209,33 +245,51 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     requestChartData(newRange);
   };
 
+  const handleMaxPointsChange = (value) => {
+    setMaxPoints(value);
+    console.log(`Max Punkte geändert auf: ${value}`);
+    // Die Anfrage wird durch useEffect ausgelöst
+  };
+
   const formatTimeTick = (timestamp) => {
     const date = new Date(timestamp);
     const hours = date.getHours();
     const minutes = date.getMinutes();
     const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-    // Wenn der Zeitbereich mehr als einen Tag umfasst, das Datum hinzufügen
     const [start, end] = timeRange;
     const diffDays = end.diff(start, 'day');
-    if (diffDays >= 1) {
+    const diffHours = end.diff(start, 'hour');
+
+    if (diffDays >= 7) {
+      const day = date.getDate();
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      return `${day}.${month}`;
+    } else if (diffDays >= 1) {
       const day = date.getDate();
       const month = (date.getMonth() + 1).toString().padStart(2, '0');
       return `${day}.${month} ${formattedTime}`;
+    } else if (diffHours >= 1) {
+      return formattedTime;
+    } else {
+      const seconds = date.getSeconds();
+      return `${formattedTime}:${seconds.toString().padStart(2, '0')}`;
     }
-    return formattedTime;
   };
 
-  // Handler für Klicks auf die Legende
+  const getTickCount = () => {
+    const dataLength = chartData.length;
+    const tickCount = Math.max(5, Math.min(10, Math.floor(dataLength / 10)));
+    return tickCount;
+  };
+
   const handleLegendClick = (topic) => {
     setVisibleLines(prev => ({
       ...prev,
-      [topic]: !prev[topic], // Sichtbarkeit umschalten
+      [topic]: !prev[topic],
     }));
   };
 
-  // Benutzerdefinierte Legenden-Rendering-Funktion
   const renderLegend = () => {
-    // Hole alle Topics aus den Chart-Daten
     const topics = chartData.length > 0
       ? Object.keys(chartData[0]).filter(key => key !== 'timestamp')
       : [];
@@ -263,7 +317,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
               onClick={() => handleLegendClick(topic)}
               style={{
                 cursor: 'pointer',
-                opacity: isVisible ? 1 : 0.5, // Reduzierte Transparenz für ausgeblendete Linien
+                opacity: isVisible ? 1 : 0.5,
                 marginBottom: 5,
                 display: 'flex',
                 alignItems: 'center',
@@ -286,8 +340,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     );
   };
 
-  // Dynamische Höhe für das Diagramm berechnen
-  const controlHeight = windowDimensions.width < 768 ? 120 : 80;
+  const controlHeight = windowDimensions.width < 768 ? 140 : 100;
   const chartHeight = windowDimensions.height - controlHeight - 40;
 
   return (
@@ -320,7 +373,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         },
       }}
       wrapClassName="fullscreen-modal"
-      bodyStyle={{ padding: 0 }}
     >
       <div
         style={{
@@ -411,6 +463,20 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
               1w
             </Button>
           </Space>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ color: '#fff', marginRight: '10px' }}>Punkte pro Topic:</label>
+            <Select
+              value={maxPoints}
+              onChange={handleMaxPointsChange}
+              style={{ width: windowDimensions.width < 768 ? '100%' : '120px', backgroundColor: '#333', color: '#fff' }}
+            >
+              <Option value={50}>50</Option>
+              <Option value={100}>100</Option>
+              <Option value={150}>150</Option>
+              <Option value={200}>200</Option>
+              <Option value={250}>250</Option>
+            </Select>
+          </div>
         </Space>
       </div>
 
@@ -440,12 +506,11 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                 stroke="#fff"
                 tickFormatter={formatTimeTick}
                 tick={{ fill: '#fff', fontSize: windowDimensions.width < 768 ? 12 : 16, dy: 10 }}
-                interval="preserveStartEnd"
+                tickCount={getTickCount()}
                 angle={windowDimensions.width < 768 ? -90 : -45}
                 textAnchor="end"
                 height={60}
               />
-              {/* Y-Achse für °C (links) */}
               <YAxis
                 yAxisId="left"
                 stroke="#fff"
@@ -454,7 +519,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                 width={windowDimensions.width < 768 ? 40 : 60}
                 label={{ value: '°C', angle: -90, position: 'insideLeft', fill: '#fff', fontSize: 16 }}
               />
-              {/* Y-Achse für % (rechts) */}
               <YAxis
                 yAxisId="right"
                 orientation="right"
@@ -477,7 +541,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                 layout="vertical"
                 align="right"
                 verticalAlign="middle"
-                content={renderLegend} // Benutzerdefinierte Legenden-Rendering-Funktion
+                content={renderLegend}
               />
               {Object.keys(chartData[0] || {})
                 .filter(key => key !== 'timestamp')
@@ -486,7 +550,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                   const color = setting && setting.color ? setting.color : '#ffffff';
                   const unit = setting ? setting.unit : '°C';
                   const yAxisId = unit === '°C' ? 'left' : 'right';
-                  // Linie nur rendern, wenn sie sichtbar ist
                   if (!visibleLines[topic]) return null;
                   console.log(`Rendere Linie für Topic: ${topic}, Farbe: ${color}, Y-Achse: ${yAxisId}`);
                   return (
@@ -496,7 +559,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                       dataKey={topic}
                       stroke={color}
                       strokeWidth={2}
-                      connectNulls={false}
+                      connectNulls={true}
                       yAxisId={yAxisId}
                     />
                   );
