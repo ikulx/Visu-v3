@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, DatePicker, Button, Space, message, Select } from 'antd';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { LeftOutlined, RightOutlined } from '@ant-design/icons';
@@ -8,31 +8,33 @@ import customParseFormat from 'dayjs/plugin/customParseFormat';
 
 dayjs.extend(customParseFormat);
 
-const { RangePicker } = DatePicker;
 const { Option } = Select;
 
 const ChartPopup = ({ visible, onClose, currentPage }) => {
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [timeRange, setTimeRange] = useState(() => {
+  const [startTime, setStartTime] = useState(() => {
     const now = dayjs();
-    const start = now.subtract(1, 'hour');
-    console.log('Initialer Zeitbereich:', {
-      start: start.format('YYYY-MM-DD HH:mm:ss'),
-      end: now.format('YYYY-MM-DD HH:mm:ss'),
-    });
-    return [start, now];
+    return now.subtract(1, 'hour');
+  });
+  const [endTime, setEndTime] = useState(() => {
+    const now = dayjs();
+    return now;
   });
   const [selectedInterval, setSelectedInterval] = useState('1h');
+  const [isLiveMode, setIsLiveMode] = useState(true);
   const [maxPoints, setMaxPoints] = useState(50);
   const [loggingSettings, setLoggingSettings] = useState([]);
   const [visibleLines, setVisibleLines] = useState({});
-  const colors = useRef({});
-  const hasRequestedInitialData = useRef(false);
   const [windowDimensions, setWindowDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
   });
+
+  const colors = useRef({});
+  const hasRequestedInitialData = useRef(false);
+  const shouldFetchData = useRef(false);
+  const intervalIdRef = useRef(null);
 
   // Bildschirmgröße überwachen
   useEffect(() => {
@@ -56,48 +58,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     }
   }, [visible]);
 
-  const requestChartData = (range) => {
-    const [start, end] = range || timeRange;
-    if (!start || !end) {
-      message.error('Bitte wählen Sie Start- und Endzeit aus.');
-      console.log('Fehler: Startzeit oder Endzeit fehlt', { start, end });
-      return;
-    }
-    if (start.isAfter(end)) {
-      message.error('Startzeit muss vor Endzeit liegen.');
-      console.log('Fehler: Startzeit nach Endzeit', {
-        start: start.format('YYYY-MM-DD HH:mm'),
-        end: end.format('YYYY-MM-DD HH:mm'),
-      });
-      return;
-    }
-
-    const now = dayjs();
-    let adjustedStart = start;
-    let adjustedEnd = end;
-    if (end.isAfter(now)) {
-      console.warn('Endzeitpunkt liegt in der Zukunft. Setze auf aktuellen Zeitpunkt.');
-      const duration = end.diff(start);
-      adjustedEnd = now;
-      adjustedStart = adjustedEnd.subtract(duration);
-      setTimeRange([adjustedStart, adjustedEnd]);
-      console.log('Korrigierter Zeitbereich:', {
-        start: adjustedStart.format('YYYY-MM-DD HH:mm:ss'),
-        end: adjustedEnd.format('YYYY-MM-DD HH:mm:ss'),
-      });
-    }
-
-    setLoading(true);
-    const params = {
-      start: adjustedStart.toISOString(),
-      end: adjustedEnd.toISOString(),
-      maxPoints: maxPoints,
-      page: currentPage,
-    };
-    console.log('Sende Daten an Socket mit maxPoints:', maxPoints, params);
-    socket.emit('request-chart-data', params);
-  };
-
+  // Socket-Handler für Datenempfang
   useEffect(() => {
     const handleChartDataUpdate = (data) => {
       console.log('Rohdaten vom Socket empfangen:', data);
@@ -120,7 +81,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       });
 
       console.log('Sortierte und formatierte Daten für Diagramm:', formattedData);
-      console.log('Anzahl der Datenpunkte:', formattedData.length);
       setChartData(formattedData);
       setLoading(false);
 
@@ -140,6 +100,11 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       setLoading(false);
     };
 
+    const handleChartDataWarning = (warning) => {
+      console.warn('Warnung vom Socket:', warning);
+      message.warning(warning.message);
+    };
+
     const handleLoggingSettingsUpdate = (data) => {
       console.log('Logging-Einstellungen empfangen:', data);
       setLoggingSettings(data);
@@ -154,6 +119,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     socket.on('disconnect', () => console.log('Socket getrennt'));
     socket.on('chart-data-update', handleChartDataUpdate);
     socket.on('chart-data-error', handleChartDataError);
+    socket.on('chart-data-warning', handleChartDataWarning);
     socket.on('logging-settings-update', handleLoggingSettingsUpdate);
 
     return () => {
@@ -161,37 +127,93 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       socket.off('disconnect');
       socket.off('chart-data-update', handleChartDataUpdate);
       socket.off('chart-data-error', handleChartDataError);
+      socket.off('chart-data-warning', handleChartDataWarning);
       socket.off('logging-settings-update', handleLoggingSettingsUpdate);
     };
   }, []);
 
-  // Reagiere auf Änderungen von maxPoints
-  useEffect(() => {
-    if (visible) {
-      console.log('maxPoints geändert, neue Anfrage mit maxPoints:', maxPoints);
-      requestChartData();
-    }
-  }, [maxPoints]);
+  // Zentrale Funktion zum Abrufen der Daten
+  const fetchData = useCallback(() => {
+    if (!shouldFetchData.current) return;
 
+    if (!startTime) {
+      message.error('Bitte wählen Sie eine Startzeit aus.');
+      console.log('Fehler: Startzeit fehlt', { startTime });
+      return;
+    }
+    if (!isLiveMode && !endTime) {
+      message.error('Bitte wählen Sie eine Endzeit aus.');
+      console.log('Fehler: Endzeit fehlt', { endTime });
+      return;
+    }
+    if (!isLiveMode && startTime.isAfter(endTime)) {
+      message.error('Startzeit muss vor Endzeit liegen.');
+      console.log('Fehler: Startzeit nach Endzeit', {
+        start: startTime.format('YYYY-MM-DD HH:mm'),
+        end: endTime.format('YYYY-MM-DD HH:mm'),
+      });
+      return;
+    }
+
+    setLoading(true);
+    const params = {
+      start: startTime.toISOString(),
+      end: isLiveMode ? 'now()' : (dayjs.isDayjs(endTime) ? endTime.toISOString() : dayjs().toISOString()),
+      maxPoints: maxPoints,
+      page: currentPage,
+    };
+    console.log('Sende Daten an Socket:', params);
+    socket.emit('request-chart-data', params);
+  }, [startTime, endTime, isLiveMode, maxPoints, currentPage]);
+
+  // Automatische Aktualisierung im Echtzeit-Modus
+  useEffect(() => {
+    if (visible && isLiveMode) {
+      intervalIdRef.current = setInterval(() => {
+        console.log('Automatische Aktualisierung im Echtzeit-Modus');
+        shouldFetchData.current = true;
+        fetchData();
+      }, 30 * 1000);
+    }
+
+    return () => {
+      if (intervalIdRef.current) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
+      }
+    };
+  }, [visible, isLiveMode, fetchData]);
+
+  // Initiale Datenanfrage und Reset beim Öffnen/Schließen des Popups
   useEffect(() => {
     if (visible && !hasRequestedInitialData.current) {
       console.log('Popup geöffnet, initiale Zeitpunkte:', {
-        start: timeRange[0].format('YYYY-MM-DD HH:mm'),
-        end: timeRange[1].format('YYYY-MM-DD HH:mm'),
+        start: startTime.format('YYYY-MM-DD HH:mm'),
+        end: isLiveMode ? 'Jetzt' : endTime.format('YYYY-MM-DD HH:mm'),
       });
-      requestChartData();
+      shouldFetchData.current = true;
+      fetchData();
       hasRequestedInitialData.current = true;
     } else if (!visible) {
+      // Zustandsänderungen bündeln
+      const now = dayjs();
       setChartData([]);
       setSelectedInterval('1h');
+      setIsLiveMode(true);
       setMaxPoints(50);
       setVisibleLines({});
+      setStartTime(now.subtract(1, 'hour'));
+      setEndTime(now);
       hasRequestedInitialData.current = false;
+      shouldFetchData.current = false;
+      if (intervalIdRef.current) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
+      }
     }
-  }, [visible]);
+  }, [visible, fetchData]);
 
   const setIntervalRange = (interval) => {
-    setSelectedInterval(interval);
     const now = dayjs();
     let start;
     switch (interval) {
@@ -207,17 +229,23 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       default:
         start = now.subtract(1, 'hour');
     }
-    const newRange = [start, now];
-    setTimeRange(newRange);
+    setSelectedInterval(interval);
+    setStartTime(start);
+    setEndTime(now);
     console.log(`Intervall ${interval} ausgewählt:`, {
       start: start.format('YYYY-MM-DD HH:mm'),
       end: now.format('YYYY-MM-DD HH:mm'),
     });
-    requestChartData(newRange);
+    shouldFetchData.current = true;
+    fetchData();
   };
 
   const shiftTimeRange = (direction) => {
-    const [start, end] = timeRange;
+    if (isLiveMode && direction === 'forward') {
+      message.info('Im "Echtzeit"-Modus kann nicht in die Zukunft verschoben werden.');
+      return;
+    }
+
     let duration;
     switch (selectedInterval) {
       case '1h':
@@ -234,21 +262,49 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     }
 
     const shift = direction === 'forward' ? duration : -duration;
-    const newStart = dayjs(start.valueOf() + shift);
-    const newEnd = dayjs(end.valueOf() + shift);
-    const newRange = [newStart, newEnd];
-    setTimeRange(newRange);
+    const newStart = dayjs(startTime.valueOf() + shift);
+    const newEnd = isLiveMode ? dayjs() : dayjs(endTime.valueOf() + shift);
+    setStartTime(newStart);
+    setEndTime(newEnd);
     console.log(`Zeitbereich verschoben (${direction}):`, {
       start: newStart.format('YYYY-MM-DD HH:mm'),
-      end: newEnd.format('YYYY-MM-DD HH:mm'),
+      end: isLiveMode ? 'Jetzt' : newEnd.format('YYYY-MM-DD HH:mm'),
     });
-    requestChartData(newRange);
+    shouldFetchData.current = true;
+    fetchData();
   };
 
   const handleMaxPointsChange = (value) => {
     setMaxPoints(value);
     console.log(`Max Punkte geändert auf: ${value}`);
-    // Die Anfrage wird durch useEffect ausgelöst
+    shouldFetchData.current = true;
+    fetchData();
+  };
+
+  const toggleLiveMode = (enableLiveMode) => {
+    setIsLiveMode(enableLiveMode);
+    if (enableLiveMode) {
+      const now = dayjs();
+      const start = now.subtract(
+        selectedInterval === '1h' ? 1 : selectedInterval === '1d' ? 24 : 7 * 24,
+        'hour'
+      );
+      setStartTime(start);
+      setEndTime(now);
+      console.log('Echtzeit-Modus aktiviert:', {
+        start: start.format('YYYY-MM-DD HH:mm'),
+        end: 'Jetzt',
+      });
+    } else {
+      const now = dayjs();
+      setEndTime(now);
+      console.log('Von-Bis-Modus aktiviert:', {
+        start: startTime.format('YYYY-MM-DD HH:mm'),
+        end: now.format('YYYY-MM-DD HH:mm'),
+      });
+    }
+    shouldFetchData.current = true;
+    fetchData();
   };
 
   const formatTimeTick = (timestamp) => {
@@ -256,9 +312,8 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     const hours = date.getHours();
     const minutes = date.getMinutes();
     const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-    const [start, end] = timeRange;
-    const diffDays = end.diff(start, 'day');
-    const diffHours = end.diff(start, 'hour');
+    const diffDays = endTime.diff(startTime, 'day');
+    const diffHours = endTime.diff(startTime, 'hour');
 
     if (diffDays >= 7) {
       const day = date.getDate();
@@ -373,6 +428,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         },
       }}
       wrapClassName="fullscreen-modal"
+      bodyStyle={{ padding: 0 }}
     >
       <div
         style={{
@@ -394,34 +450,56 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             style={{ backgroundColor: '#333333', borderColor: '#434343', color: '#fff' }}
           />
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ color: '#fff', marginRight: '10px' }}>Zeitbereich:</label>
-            <RangePicker
+            <label style={{ color: '#fff', marginRight: '10px' }}>Von:</label>
+            <DatePicker
               showTime={{ format: 'HH:mm' }}
               format="YYYY-MM-DD HH:mm"
-              value={timeRange}
-              onChange={(dates) => {
-                if (dates && dates[0] && dates[1]) {
-                  setTimeRange([dates[0], dates[1]]);
-                  console.log('Zeitbereich ausgewählt:', {
-                    start: dates[0].format('YYYY-MM-DD HH:mm'),
-                    end: dates[1].format('YYYY-MM-DD HH:mm'),
-                  });
-                  requestChartData([dates[0], dates[1]]);
+              value={startTime}
+              onChange={(date) => {
+                if (date) {
+                  setStartTime(date);
+                  console.log('Startzeit ausgewählt:', date.format('YYYY-MM-DD HH:mm'));
+                  shouldFetchData.current = true;
+                  fetchData();
                 } else {
                   const now = dayjs();
-                  const defaultRange = [now.subtract(1, 'hour'), now];
-                  setTimeRange(defaultRange);
-                  console.log('Zurück zu Standard:', {
-                    start: now.subtract(1, 'hour').format('YYYY-MM-DD HH:mm'),
-                    end: now.format('YYYY-MM-DD HH:mm'),
-                  });
-                  requestChartData(defaultRange);
+                  setStartTime(now.subtract(1, 'hour'));
+                  console.log('Startzeit zurückgesetzt:', now.subtract(1, 'hour').format('YYYY-MM-DD HH:mm'));
+                  shouldFetchData.current = true;
+                  fetchData();
                 }
               }}
               allowClear={false}
-              style={{ width: windowDimensions.width < 768 ? '100%' : '300px' }}
+              style={{ width: windowDimensions.width < 768 ? '100%' : '150px' }}
               popupStyle={{ backgroundColor: '#141414', color: '#fff' }}
             />
+            {!isLiveMode && (
+              <>
+                <label style={{ color: '#fff', marginLeft: '10px', marginRight: '10px' }}>Bis:</label>
+                <DatePicker
+                  showTime={{ format: 'HH:mm' }}
+                  format="YYYY-MM-DD HH:mm"
+                  value={endTime}
+                  onChange={(date) => {
+                    if (date) {
+                      setEndTime(date);
+                      console.log('Endzeit ausgewählt:', date.format('YYYY-MM-DD HH:mm'));
+                      shouldFetchData.current = true;
+                      fetchData();
+                    } else {
+                      const now = dayjs();
+                      setEndTime(now);
+                      console.log('Endzeit zurückgesetzt:', now.format('YYYY-MM-DD HH:mm'));
+                      shouldFetchData.current = true;
+                      fetchData();
+                    }
+                  }}
+                  allowClear={false}
+                  style={{ width: windowDimensions.width < 768 ? '100%' : '150px' }}
+                  popupStyle={{ backgroundColor: '#141414', color: '#fff' }}
+                />
+              </>
+            )}
           </div>
           <Button
             icon={<RightOutlined />}
@@ -462,6 +540,28 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             >
               1w
             </Button>
+            <Button
+              onClick={() => toggleLiveMode(true)}
+              type={isLiveMode ? 'primary' : 'default'}
+              style={{
+                backgroundColor: isLiveMode ? '#ffb000' : '#333333',
+                borderColor: '#434343',
+                color: '#fff',
+              }}
+            >
+              Echtzeit
+            </Button>
+            <Button
+              onClick={() => toggleLiveMode(false)}
+              type={isLiveMode ? 'default' : 'primary'}
+              style={{
+                backgroundColor: isLiveMode ? '#333333' : '#ffb000',
+                borderColor: '#434343',
+                color: '#fff',
+              }}
+            >
+              Von-Bis
+            </Button>
           </Space>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ color: '#fff', marginRight: '10px' }}>Punkte pro Topic:</label>
@@ -472,10 +572,9 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             >
               <Option value={50}>50</Option>
               <Option value={100}>100</Option>
+              <Option value={150}>150</Option>
               <Option value={200}>200</Option>
-              <Option value={500}>500</Option>
-              <Option value={1000}>1000</Option>
-              
+              <Option value={250}>250</Option>
             </Select>
           </div>
         </Space>
@@ -500,6 +599,7 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                 left: 20,
                 bottom: 40,
               }}
+              isAnimationActive={false}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#444" />
               <XAxis

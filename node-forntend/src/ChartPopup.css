@@ -38,10 +38,10 @@
       width: 100% !important;
     }
   
-    .ant-btn {
+    /* .ant-btn {
       width: 100% !important;
       margin-bottom: 5px !important;
-    }
+    } */
   
     .ant-modal-body > div:last-child {
       overflow: hidden !important; /* Verhindert Scrollen im Diagrammbereich */

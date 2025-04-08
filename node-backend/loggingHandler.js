@@ -13,6 +13,7 @@ class LoggingHandler {
     this.influxClient = this.setupInfluxClient();
     this.activeTopics = new Set();
     this.valueCache = new Map();
+    this.connectedClients = new Map();
     this.loadLoggingSettings();
     this.setupMqttListener();
     this.startMinuteInterval();
@@ -150,6 +151,7 @@ class LoggingHandler {
   async fetchChartData(socket, { start = '-1h', end = 'now()', maxPoints = 50, page }) {
     console.log('Erhaltene Parameter:', { start, end, maxPoints, page });
 
+    // Topics aus der SQLite-Datenbank abrufen
     const rows = await new Promise((resolve, reject) => {
       this.sqliteDB.all(
         'SELECT topic, page FROM logging_settings WHERE enabled = 1',
@@ -170,20 +172,7 @@ class LoggingHandler {
       return;
     }
 
-    // Berechne die Zeitdauer des Bereichs in Sekunden
-    let startTime, endTime;
-    if (start.startsWith('-')) {
-      startTime = new Date(dayjs().add(parseInt(start), 'second').valueOf());
-      endTime = new Date(dayjs().valueOf());
-    } else {
-      startTime = new Date(start);
-      endTime = new Date(end);
-    }
-
-    const timeRangeSeconds = (endTime - startTime) / 1000; // Zeitdauer in Sekunden
-    console.log('Zeitbereich:', { startTime, endTime, timeRangeSeconds });
-
-    // Daten für alle Topics abrufen
+    // Flux-Abfrage für zeitlich synchronisierte Daten
     const topicFilter = filteredTopics
       .map(topic => `r.topic == "${topic}"`)
       .join(' or ');
@@ -194,74 +183,43 @@ class LoggingHandler {
         |> filter(fn: (r) => r._measurement == "mqtt_logs")
         |> filter(fn: (r) => r._field == "average")
         ${topicFilter ? `|> filter(fn: (r) => ${topicFilter})` : ''}
-        |> sort(columns: ["_time"])
+        |> window(every: 1m)
+        |> mean()
+        |> duplicate(column: "_stop", as: "_time")
+        |> window(every: inf)
+        |> sort(columns: ["_time"], desc: true)
+        |> limit(n: ${maxPoints})
+        |> pivot(rowKey: ["_time"], columnKey: ["topic"], valueColumn: "_value")
     `;
 
     console.log('Flux-Abfrage:', fluxQuery);
 
-    const rawData = [];
-    await this.queryApi.collectRows(fluxQuery, (row, tableMeta) => {
-      const timestamp = new Date(tableMeta.get(row, '_time')).getTime();
-      const topic = tableMeta.get(row, 'topic');
-      const value = parseFloat(tableMeta.get(row, '_value'));
-      rawData.push({ time: timestamp, topic, value });
-    });
-
-    console.log('Abgerufene Rohdaten:', rawData);
-
-    // Gruppiere die Daten nach Zeitstempel
-    const groupedByTime = {};
-    rawData.forEach(({ time, topic, value }) => {
-      // Runde den Zeitstempel auf die nächste Sekunde, um Millisekundenunterschiede zu eliminieren
-      const roundedTime = Math.round(time / 1000) * 1000;
-      if (!groupedByTime[roundedTime]) {
-        groupedByTime[roundedTime] = { time: roundedTime };
-        filteredTopics.forEach(t => {
-          groupedByTime[roundedTime][t] = null;
+    try {
+      const data = [];
+      await this.queryApi.collectRows(fluxQuery, (row, tableMeta) => {
+        const timestamp = new Date(tableMeta.get(row, '_time')).getTime();
+        const entry = { time: timestamp };
+        filteredTopics.forEach(topic => {
+          const value = tableMeta.get(row, topic);
+          entry[topic] = value !== undefined && value !== null ? parseFloat(value) : null;
         });
-      }
-      groupedByTime[roundedTime][topic] = value;
-    });
-
-    let allData = Object.values(groupedByTime).sort((a, b) => a.time - b.time);
-    console.log('Gruppiert nach Zeitstempel:', allData);
-
-    // Wähle bis zu maxPoints Datenpunkte aus, die gleichmäßig verteilt sind
-    if (allData.length > maxPoints) {
-      const step = allData.length / maxPoints;
-      const selectedData = [];
-      for (let i = 0; i < maxPoints; i++) {
-        const index = Math.floor(i * step);
-        selectedData.push(allData[index]);
-      }
-      allData = selectedData;
-    }
-
-    console.log(`Ausgewählte Daten (${allData.length} Punkte):`, allData);
-
-    // Zähle die Anzahl der Datenpunkte pro Topic
-    const pointsPerTopic = {};
-    filteredTopics.forEach(topic => {
-      pointsPerTopic[topic] = 0;
-    });
-    allData.forEach(item => {
-      filteredTopics.forEach(topic => {
-        if (item[topic] !== null) {
-          pointsPerTopic[topic]++;
+        if (Object.keys(entry).length > 1) {
+          data.push(entry);
         }
       });
-    });
 
-    console.log('Anzahl der Datenpunkte pro Topic:', pointsPerTopic);
+      // Sortiere die Daten aufsteigend nach Zeitstempel für das Frontend
+      data.sort((a, b) => a.time - b.time);
 
-    // Formatiere die Daten für das Frontend
-    const formattedData = allData;
-
-    console.log('Formatierte Daten für Frontend:', formattedData);
-    if (formattedData.length === 0) {
-      console.warn('Keine Daten zurückgegeben von InfluxDB');
+      console.log('Abgerufene Daten:', data);
+      if (data.length === 0) {
+        console.warn('Keine Daten zurückgegeben von InfluxDB');
+      }
+      socket.emit('chart-data-update', data);
+    } catch (error) {
+      console.error('Fehler bei der Abfrage:', error);
+      socket.emit('chart-data-error', { message: 'Fehler beim Laden der Daten', error: error.message });
     }
-    socket.emit('chart-data-update', formattedData);
   }
 
   setupSocketHandlers() {
@@ -279,6 +237,11 @@ class LoggingHandler {
       socket.on('request-chart-data', (params) => {
         console.log('Received request-chart-data with params:', params);
         this.fetchChartData(socket, params);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Client getrennt:', socket.id);
+        this.connectedClients.delete(socket.id);
       });
     });
   }
