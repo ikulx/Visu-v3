@@ -28,7 +28,11 @@ const resources = {
       connectionError: "Verbindungsfehler: {{message}}",
       reconnectError: "Wiederverbindungsfehler: {{message}}",
       initialConnectionError: "Keine Verbindung zum Server beim Start",
-      reconnecting: "Versuche, die Verbindung wiederherzustellen..."
+      reconnecting: "Versuche, die Verbindung wiederherzustellen...",
+      Realtime:"Live",
+      Range:"Bereich",
+      from:"von",
+      to:"bis",
     }
   },
   en: {
@@ -56,7 +60,11 @@ const resources = {
       connectionError: "Connection error: {{message}}",
       reconnectError: "Reconnection error: {{message}}",
       initialConnectionError: "No connection to server on startup",
-      reconnecting: "Attempting to reconnect..."
+      reconnecting: "Attempting to reconnect...",
+      Realtime:"Live",
+      Range:"Range",
+      from:"from",
+      to:"to",
     }
   },
   fr: {
@@ -83,7 +91,11 @@ const resources = {
       connectionError: "Erreur de connexion: {{message}}",
       reconnectError: "Erreur de reconnexion: {{message}}",
       initialConnectionError: "Aucune connexion au serveur au démarrage",
-      reconnecting: "Tentative de reconnexion..."
+      reconnecting: "Tentative de reconnexion...",
+      Realtime:"Live",
+      Range:"Secteur",
+      from:"de",
+      to:"à",
     }
   },
   it: {
@@ -110,7 +122,11 @@ const resources = {
       connectionError: "Errore di connessione: {{message}}",
       reconnectError: "Errore di riconnessione: {{message}}",
       initialConnectionError: "Nessuna connessione al server all'avvio",
-      reconnecting: "Tentativo di riconnessione..."
+      reconnecting: "Tentativo di riconnessione...",
+      Realtime:"Live",
+      Range:"Settore",
+      from:"da",
+      to:"a",
     }
   }
 };

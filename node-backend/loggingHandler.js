@@ -1,255 +1,542 @@
-const { InfluxDB, Point } = require('@influxdata/influxdb-client');
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Modal, Button, Space, message } from 'antd';
+import { LeftOutlined, RightOutlined } from '@ant-design/icons';
+import socket from './socket';
+import dayjs from 'dayjs';
+import customParseFormat from 'dayjs/plugin/customParseFormat';
+import { LineChart, ChartsGrid, ChartsXAxis, ChartsYAxis, ChartsTooltip, ChartsLegend } from '@mui/x-charts';
+import { LocalizationProvider, DateTimePicker } from '@mui/x-date-pickers';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { TextField, createTheme, ThemeProvider } from '@mui/material';
+import { styled } from '@mui/material/styles';
 
-class LoggingHandler {
-  constructor(io, sqliteDB, mqttHandler) {
-    this.io = io;
-    this.sqliteDB = sqliteDB;
-    this.mqttHandler = mqttHandler;
-    this.influxDB = new InfluxDB({
-      url: 'http://192.168.10.31:8086',
-      token: 'VB4OadT3sVDTkKApno6dZaKbmZhNdBzHn93YDyH41fXRNVHuw49-R1sFL0IYrP6ysoPQAq3QNFVt165MqbjsAg==',
-    });
-    this.queryApi = this.influxDB.getQueryApi('YgnisAG');
-    this.influxClient = this.setupInfluxClient();
-    this.activeTopics = new Set();
-    this.valueCache = new Map();
-    this.connectedClients = new Map();
-    this.loadLoggingSettings();
-    this.setupMqttListener();
-    this.startMinuteInterval();
-    this.setupSocketHandlers();
-  }
+dayjs.extend(customParseFormat);
 
-  setupInfluxClient() {
-    return this.influxDB.getWriteApi('YgnisAG', 'dev-bucket', 'ms');
-  }
+// Darkmode-Theme für MUI-Komponenten
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    background: {
+      default: '#141414',
+      paper: '#1f1f1f',
+    },
+    text: {
+      primary: '#ffffff',
+      secondary: '#b0b0b0',
+    },
+  },
+  components: {
+    MuiTextField: {
+      styleOverrides: {
+        root: {
+          '& .MuiInputBase-root': {
+            backgroundColor: '#1f1f1f',
+            color: '#ffffff',
+          },
+          '& .MuiOutlinedInput-notchedOutline': {
+            borderColor: '#434343',
+          },
+          '&:hover .MuiOutlinedInput-notchedOutline': {
+            borderColor: '#ffb000',
+          },
+        },
+      },
+    },
+    MuiPickersPopper: {
+      styleOverrides: {
+        root: {
+          backgroundColor: '#1f1f1f',
+          color: '#ffffff',
+        },
+      },
+    },
+  },
+});
 
-  async loadLoggingSettings() {
-    try {
-      const rows = await new Promise((resolve, reject) => {
-        this.sqliteDB.all(
-          'SELECT topic, enabled, color, page, description, unit FROM logging_settings WHERE enabled = 1',
-          [],
-          (err, rows) => (err ? reject(err) : resolve(rows))
-        );
+// Styled DateTimePicker für Darkmode
+const DarkDateTimePicker = styled(DateTimePicker)({
+  '& .MuiInputBase-root': {
+    backgroundColor: '#1f1f1f',
+    color: '#ffffff',
+  },
+  '& .MuiOutlinedInput-notchedOutline': {
+    borderColor: '#434343',
+  },
+  '&:hover .MuiOutlinedInput-notchedOutline': {
+    borderColor: '#ffb000',
+  },
+});
+
+const ChartPopup = ({ visible, onClose, currentPage }) => {
+  const [chartData, setChartData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [startTime, setStartTime] = useState(() => dayjs().subtract(1, 'hour'));
+  const [endTime, setEndTime] = useState(() => dayjs());
+  const [selectedInterval, setSelectedInterval] = useState('1h');
+  const [isLiveMode, setIsLiveMode] = useState(true);
+  const [loggingSettings, setLoggingSettings] = useState([]);
+  const [visibleLines, setVisibleLines] = useState({});
+  const [windowDimensions, setWindowDimensions] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
+
+  const colors = useRef({});
+  const hasRequestedInitialData = useRef(false);
+  const shouldFetchData = useRef(false);
+  const intervalIdRef = useRef(null);
+
+  const isMobile = windowDimensions.width < 768;
+
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight,
       });
-      this.activeTopics = new Set(rows.map(row => row.topic));
-      console.log('Active topics loaded:', this.activeTopics);
-    } catch (err) {
-      console.error('Fehler beim Laden der Logging-Einstellungen:', err);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (visible) {
+      socket.emit('request-logging-settings');
     }
-  }
+  }, [visible]);
 
-  setupMqttListener() {
-    this.mqttHandler.onMessage((topic, value) => {
-      if (this.activeTopics.has(topic)) {
-        this.storeValue(topic, value);
+  useEffect(() => {
+    const handleChartDataUpdate = (data) => {
+      console.log('Received chart data:', data);
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        setChartData([]);
+        setLoading(false);
+        return;
       }
-    });
-  }
+      const sortedData = [...data].sort((a, b) => a.time - b.time);
+      const formattedData = sortedData.map((item) => {
+        const entry = { timestamp: Number(item.time) };
+        Object.keys(item)
+          .filter((key) => key !== 'time')
+          .forEach((key) => {
+            entry[key] = item[key] !== null && item[key] !== undefined ? Number(item[key]) : null;
+          });
+        return entry;
+      });
+      console.log('Formatted chart data:', formattedData);
+      setChartData(formattedData);
+      setLoading(false);
 
-  storeValue(topic, value) {
-    const numericValue = parseFloat(value);
-    if (isNaN(numericValue)) {
-      console.warn(`Ungültiger Wert für Topic ${topic}: ${value}`);
+      const initialVisibleLines = {};
+      Object.keys(formattedData[0] || {})
+        .filter((key) => key !== 'timestamp')
+        .forEach((topic) => (initialVisibleLines[topic] = true));
+      setVisibleLines(initialVisibleLines);
+    };
+
+    const handleChartDataError = (error) => {
+      console.error('Chart data error:', error);
+      message.error(`Fehler: ${error.message}`);
+      setChartData([]);
+      setLoading(false);
+    };
+
+    const handleLoggingSettingsUpdate = (data) => {
+      console.log('Logging settings:', data);
+      setLoggingSettings(data || []);
+      (data || []).forEach((setting) => {
+        if (setting.color) colors.current[setting.topic] = setting.color;
+      });
+    };
+
+    socket.on('chart-data-update', handleChartDataUpdate);
+    socket.on('chart-data-error', handleChartDataError);
+    socket.on('logging-settings-update', handleLoggingSettingsUpdate);
+
+    return () => {
+      socket.off('chart-data-update', handleChartDataUpdate);
+      socket.off('chart-data-error', handleChartDataError);
+      socket.off('logging-settings-update', handleLoggingSettingsUpdate);
+    };
+  }, []);
+
+  const fetchData = useCallback((start, end, liveMode, page) => {
+    if (!shouldFetchData.current) return;
+
+    if (!start || !start.isValid()) {
+      message.error('Bitte wählen Sie eine gültige Startzeit aus.');
       return;
     }
-    if (!this.valueCache.has(topic)) {
-      this.valueCache.set(topic, []);
+    if (!liveMode && (!end || !end.isValid())) {
+      message.error('Bitte wählen Sie eine gültige Endzeit aus.');
+      return;
     }
-    this.valueCache.get(topic).push(numericValue);
-  }
-
-  startMinuteInterval() {
-    setInterval(() => {
-      this.writeAveragesToInflux();
-    }, 60 * 1000);
-  }
-
-  writeAveragesToInflux() {
-    if (this.valueCache.size === 0) {
+    if (!liveMode && start.isAfter(end)) {
+      message.error('Startzeit muss vor Endzeit liegen.');
       return;
     }
 
-    const points = [];
-    for (const [topic, values] of this.valueCache.entries()) {
-      if (values.length === 0) continue;
+    setLoading(true);
+    const params = {
+      start: start.toISOString(),
+      end: liveMode ? 'now()' : end.toISOString(),
+      page,
+    };
+    console.log('Fetching data with params:', params);
+    socket.emit('request-chart-data', params);
+  }, []);
 
-      const average = values.reduce((sum, val) => sum + val, 0) / values.length;
-      const roundedAverage = parseFloat(average.toFixed(1));
-      const point = new Point('mqtt_logs')
-        .tag('topic', topic)
-        .floatField('average', roundedAverage)
-        .timestamp(new Date());
-
-      points.push(point);
-      console.log(`Mittelwert für ${topic}: ${roundedAverage} (basierend auf ${values.length} Werten)`);
+  useEffect(() => {
+    if (visible && isLiveMode) {
+      intervalIdRef.current = setInterval(() => {
+        shouldFetchData.current = true;
+        fetchData(startTime, endTime, isLiveMode, currentPage);
+      }, 30 * 1000);
     }
+    return () => {
+      if (intervalIdRef.current) clearInterval(intervalIdRef.current);
+    };
+  }, [visible, isLiveMode, fetchData, startTime, endTime, currentPage]);
 
-    if (points.length > 0) {
-      this.influxClient.writePoints(points);
-      this.influxClient.flush().catch(err => {
-        console.error('Fehler beim Schreiben der Mittelwerte in InfluxDB:', err);
-      });
+  useEffect(() => {
+    if (visible && !hasRequestedInitialData.current) {
+      shouldFetchData.current = true;
+      fetchData(startTime, endTime, isLiveMode, currentPage);
+      hasRequestedInitialData.current = true;
+    } else if (!visible) {
+      const now = dayjs();
+      setChartData([]);
+      setSelectedInterval('1h');
+      setIsLiveMode(true);
+      setVisibleLines({});
+      setStartTime(now.subtract(1, 'hour'));
+      setEndTime(now);
+      hasRequestedInitialData.current = false;
+      shouldFetchData.current = false;
+      if (intervalIdRef.current) clearInterval(intervalIdRef.current);
     }
+  }, [visible, fetchData, currentPage]);
 
-    this.valueCache.clear();
-  }
-
-  async updatePagesAndSettings({ pages, settings }) {
-    try {
-      await new Promise((resolve, reject) => {
-        this.sqliteDB.run('DELETE FROM logging_settings', [], (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-
-      for (const setting of settings) {
-        await new Promise((resolve, reject) => {
-          this.sqliteDB.run(
-            `INSERT OR REPLACE INTO logging_settings (topic, enabled, color, page, description, unit, updated_at) 
-             VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M','now', 'localtime'))`,
-            [setting.topic, setting.enabled ? 1 : 0, setting.color, setting.page, setting.description, setting.unit],
-            (err) => {
-              if (err) reject(err);
-              else resolve();
-            }
-          );
-        });
-      }
-
-      this.activeTopics.clear();
-      this.valueCache.clear();
-      settings.forEach(setting => {
-        if (setting.enabled) {
-          this.activeTopics.add(setting.topic);
-        }
-      });
-
-      this.broadcastSettings();
-    } catch (err) {
-      console.error('Fehler beim Aktualisieren der Seiten und Logging-Einstellungen:', err);
-    }
-  }
-
-  broadcastSettings() {
-    this.sqliteDB.all(
-      'SELECT topic, enabled, color, page, description, unit FROM logging_settings ORDER BY page ASC',
-      [],
-      (err, rows) => {
-        if (err) {
-          console.error('Fehler beim Abrufen der Logging-Einstellungen:', err);
-          return;
-        }
-        console.log('Broadcasting logging settings:', rows);
-        this.io.emit('logging-settings-update', rows);
-      }
+  const setIntervalRange = (interval) => {
+    const now = dayjs();
+    const start = now.subtract(
+      interval === '1h' ? 1 : interval === '1d' ? 24 : 7 * 24,
+      'hour'
     );
-  }
+    setSelectedInterval(interval);
+    setStartTime(start);
+    setEndTime(now);
+    shouldFetchData.current = true;
+    fetchData(start, now, isLiveMode, currentPage);
+  };
 
-  async fetchChartData(socket, { start = '-1h', end = 'now()', maxPoints = 50, page }) {
-    console.log('Erhaltene Parameter:', { start, end, maxPoints, page });
-
-    // Topics aus der SQLite-Datenbank abrufen
-    const rows = await new Promise((resolve, reject) => {
-      this.sqliteDB.all(
-        'SELECT topic, page FROM logging_settings WHERE enabled = 1',
-        [],
-        (err, rows) => (err ? reject(err) : resolve(rows))
-      );
-    });
-
-    const filteredTopics = rows
-      .filter(row => row.page && row.page.split(',').map(p => p.trim()).includes(page))
-      .map(row => row.topic);
-
-    console.log('Gefilterte Topics für Seite', page, ':', filteredTopics);
-
-    if (filteredTopics.length === 0) {
-      console.log('Keine passenden Topics gefunden, sende leeres Array');
-      socket.emit('chart-data-update', []);
+  const shiftTimeRange = (direction) => {
+    if (isLiveMode && direction === 'forward') {
+      message.info('Im "Echtzeit"-Modus kann nicht in die Zukunft verschoben werden.');
       return;
     }
+    const duration =
+      selectedInterval === '1h'
+        ? 1 * 60 * 60 * 1000
+        : selectedInterval === '1d'
+        ? 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000;
+    const shift = direction === 'forward' ? duration : -duration;
+    const newStart = dayjs(startTime.valueOf() + shift);
+    const newEnd = isLiveMode ? dayjs() : dayjs(endTime.valueOf() + shift);
+    setStartTime(newStart);
+    setEndTime(newEnd);
+    shouldFetchData.current = true;
+    fetchData(newStart, newEnd, isLiveMode, currentPage);
+  };
 
-    // Flux-Abfrage für zeitlich synchronisierte Daten
-    const topicFilter = filteredTopics
-      .map(topic => `r.topic == "${topic}"`)
-      .join(' or ');
-
-    const fluxQuery = `
-      from(bucket: "dev-bucket")
-        |> range(start: ${start}, stop: ${end})
-        |> filter(fn: (r) => r._measurement == "mqtt_logs")
-        |> filter(fn: (r) => r._field == "average")
-        ${topicFilter ? `|> filter(fn: (r) => ${topicFilter})` : ''}
-        |> window(every: 1m)
-        |> mean()
-        |> duplicate(column: "_stop", as: "_time")
-        |> window(every: inf)
-        |> sort(columns: ["_time"], desc: true)
-        |> limit(n: ${maxPoints})
-        |> pivot(rowKey: ["_time"], columnKey: ["topic"], valueColumn: "_value")
-    `;
-
-    console.log('Flux-Abfrage:', fluxQuery);
-
-    try {
-      const data = [];
-      await this.queryApi.collectRows(fluxQuery, (row, tableMeta) => {
-        const timestamp = new Date(tableMeta.get(row, '_time')).getTime();
-        const entry = { time: timestamp };
-        filteredTopics.forEach(topic => {
-          const value = tableMeta.get(row, topic);
-          entry[topic] = value !== undefined && value !== null ? parseFloat(value) : null;
-        });
-        if (Object.keys(entry).length > 1) {
-          data.push(entry);
-        }
-      });
-
-      // Sortiere die Daten aufsteigend nach Zeitstempel für das Frontend
-      data.sort((a, b) => a.time - b.time);
-
-      console.log('Abgerufene Daten:', data);
-      if (data.length === 0) {
-        console.warn('Keine Daten zurückgegeben von InfluxDB');
-      }
-      socket.emit('chart-data-update', data);
-    } catch (error) {
-      console.error('Fehler bei der Abfrage:', error);
-      socket.emit('chart-data-error', { message: 'Fehler beim Laden der Daten', error: error.message });
+  const toggleLiveMode = (enableLiveMode) => {
+    setIsLiveMode(enableLiveMode);
+    const now = dayjs();
+    if (enableLiveMode) {
+      const start = now.subtract(
+        selectedInterval === '1h' ? 1 : selectedInterval === '1d' ? 24 : 7 * 24,
+        'hour'
+      );
+      setStartTime(start);
+      setEndTime(now);
+      shouldFetchData.current = true;
+      fetchData(start, now, true, currentPage);
+    } else {
+      setEndTime(now);
+      shouldFetchData.current = true;
+      fetchData(startTime, now, false, currentPage);
     }
-  }
+  };
 
-  setupSocketHandlers() {
-    this.io.on('connection', (socket) => {
-      console.log('Client verbunden:', socket.id);
+  const formatTimeTick = (timestamp) => {
+    const date = new Date(timestamp);
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const day = date.getDate();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const diffDays = endTime.diff(startTime, 'day');
+    if (diffDays >= 7) {
+      return `${day}.${month}`;
+    } else if (diffDays >= 1) {
+      return `${day}.${month} ${hours}:${minutes}`;
+    } else {
+      return `${hours}:${minutes}`;
+    }
+  };
 
-      socket.on('update-pages-and-settings', (data) => {
-        this.updatePagesAndSettings(data);
-      });
+  const renderLegend = () => {
+    const topics = chartData.length > 0
+      ? Object.keys(chartData[0]).filter((key) => key !== 'timestamp')
+      : [];
+    return (
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0, color: '#fff', fontSize: isMobile ? 12 : 14 }}>
+        {topics.map((topic) => {
+          const setting = loggingSettings.find((s) => s.topic === topic);
+          const label = setting?.description || topic;
+          const unit = setting?.unit ? ` (${setting.unit})` : '';
+          const color = setting?.color || '#ffffff';
+          const isVisible = visibleLines[topic];
+          return (
+            <li
+              key={topic}
+              onClick={() => setVisibleLines((prev) => ({ ...prev, [topic]: !prev[topic] }))}
+              style={{ cursor: 'pointer', opacity: isVisible ? 1 : 0.5, marginBottom: 5, display: 'flex', alignItems: 'center' }}
+            >
+              <span style={{ width: 10, height: 10, backgroundColor: color, marginRight: 5 }} />
+              {label + unit}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
 
-      socket.on('request-logging-settings', () => {
-        this.broadcastSettings();
-      });
+  const chartContent = useMemo(() => {
+    if (loading) {
+      return <div style={{ color: '#fff', textAlign: 'center', padding: '20px' }}>Lade Diagrammdaten...</div>;
+    }
+    if (!Array.isArray(chartData) || chartData.length === 0) {
+      return <div style={{ color: '#fff', textAlign: 'center', padding: '20px' }}>Keine Daten verfügbar</div>;
+    }
 
-      socket.on('request-chart-data', (params) => {
-        console.log('Received request-chart-data with params:', params);
-        this.fetchChartData(socket, params);
-      });
+    console.log('Rendering chart with data:', chartData);
+    const firstDataPoint = chartData[0] || {};
+    const seriesKeys = Object.keys(firstDataPoint).filter((key) => key !== 'timestamp');
 
-      socket.on('disconnect', () => {
-        console.log('Client getrennt:', socket.id);
-        this.connectedClients.delete(socket.id);
-      });
+    if (seriesKeys.length === 0) {
+      return <div style={{ color: '#fff', textAlign: 'center', padding: '20px' }}>Keine gültigen Datenreihen verfügbar</div>;
+    }
+
+    const series = seriesKeys.map((topic) => {
+      const setting = loggingSettings.find((s) => s.topic === topic);
+      return {
+        dataKey: topic,
+        label: setting?.description || topic,
+        color: colors.current[topic] || '#ffffff',
+        showMark: false,
+        curve: 'monotone',
+        connectNulls: true,
+        visible: visibleLines[topic],
+        unit: setting?.unit || '', // Einheit für spätere Verwendung
+      };
     });
-  }
-}
 
-function setupLogging(io, sqliteDB, mqttHandler) {
-  const logger = new LoggingHandler(io, sqliteDB, mqttHandler);
-  return logger;
-}
+    // Finde die häufigste Einheit für die Y-Achse (falls mehrere Einheiten vorhanden sind)
+    const units = series.map((s) => s.unit).filter((u) => u);
+    const mostCommonUnit = units.length > 0 ? units.sort((a, b) => units.filter((u) => u === a).length - units.filter((u) => u === b).length).pop() : '';
 
-module.exports = { setupLogging };
+    return (
+      <LineChart
+        dataset={chartData}
+        series={series.filter((s) => s.visible)}
+        xAxis={[
+          {
+            dataKey: 'timestamp',
+            valueFormatter: formatTimeTick,
+            tickLabelStyle: { fill: '#fff', fontSize: isMobile ? 12 : 16 },
+            angle: isMobile ? -90 : -45,
+            textAnchor: 'end',
+            stroke: '#fff',
+          },
+        ]}
+        yAxis={[
+          {
+            tickLabelStyle: { fill: '#fff', fontSize: isMobile ? 12 : 16 },
+            label: `Wert${mostCommonUnit ? ` (${mostCommonUnit})` : ''}`,
+            labelStyle: { fill: '#fff' },
+            stroke: '#fff',
+          },
+        ]}
+        width={windowDimensions.width - 40}
+        height={windowDimensions.height - (isMobile ? 200 : 100) - 40}
+        margin={{ top: 20, right: isMobile ? 100 : 140, left: 60, bottom: 60 }}
+        sx={{
+          backgroundColor: '#141414',
+          '& .MuiChartsAxis-tick': { stroke: '#fff' },
+          '& .MuiChartsAxis-line': { stroke: '#fff' },
+        }}
+      >
+        <ChartsGrid horizontal vertical strokeDasharray="3 3" stroke="#444" />
+        <ChartsTooltip
+          slotProps={{
+            popper: {
+              sx: {
+                '& .MuiChartsTooltip-root': {
+                  backgroundColor: '#1f1f1f',
+                  color: '#fff',
+                  border: '1px solid #434343',
+                },
+              },
+            },
+          }}
+          formatter={(item) => {
+            const setting = loggingSettings.find((s) => s.topic === item.dataKey);
+            const unit = setting?.unit || '';
+            return {
+              name: setting?.description || item.dataKey,
+              value: `${item.value}${unit ? ` ${unit}` : ''}`,
+            };
+          }}
+        />
+        <ChartsLegend
+          slot={renderLegend}
+          position={{ vertical: 'middle', horizontal: 'right' }}
+          direction="column"
+          padding={{ right: 10 }}
+        />
+      </LineChart>
+    );
+  }, [loading, chartData, visibleLines, windowDimensions, loggingSettings]);
+
+  return (
+    <ThemeProvider theme={darkTheme}>
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
+        <Modal
+          open={visible}
+          onCancel={onClose}
+          footer={null}
+          width="100%"
+          style={{ top: 0, padding: 0, margin: 0, height: '100vh' }}
+          styles={{
+            body: {
+              height: '100vh',
+              padding: 0,
+              backgroundColor: '#141414',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+            mask: {
+              backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            },
+          }}
+        >
+          <div style={{ padding: '10px 20px', backgroundColor: '#141414', borderBottom: '1px solid #333' }}>
+            <Space direction={isMobile ? 'vertical' : 'horizontal'} size="middle" style={{ width: '100%' }}>
+              <Button
+                icon={<LeftOutlined />}
+                onClick={() => shiftTimeRange('backward')}
+                style={{ backgroundColor: '#333333', borderColor: '#434343', color: '#fff' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#fff', marginRight: 10 }}>Von:</label>
+                <DarkDateTimePicker
+                  value={startTime}
+                  onChange={(date) => {
+                    if (date && date.isValid()) {
+                      setStartTime(date);
+                      shouldFetchData.current = true;
+                      fetchData(date, endTime, isLiveMode, currentPage);
+                    }
+                  }}
+                  slotProps={{ textField: { size: 'small' } }}
+                />
+                {!isLiveMode && (
+                  <>
+                    <label style={{ color: '#fff', marginLeft: 10, marginRight: 10 }}>Bis:</label>
+                    <DarkDateTimePicker
+                      value={endTime}
+                      onChange={(date) => {
+                        if (date && date.isValid()) {
+                          setEndTime(date);
+                          shouldFetchData.current = true;
+                          fetchData(startTime, date, isLiveMode, currentPage);
+                        }
+                      }}
+                      slotProps={{ textField: { size: 'small' } }}
+                    />
+                  </>
+                )}
+              </div>
+              <Button
+                icon={<RightOutlined />}
+                onClick={() => shiftTimeRange('forward')}
+                style={{ backgroundColor: '#333333', borderColor: '#434343', color: '#fff' }}
+              />
+              <Space size="small">
+                <Button
+                  onClick={() => setIntervalRange('1h')}
+                  type={selectedInterval === '1h' ? 'primary' : 'default'}
+                  style={{
+                    backgroundColor: selectedInterval === '1h' ? '#ffb000' : '#333333',
+                    borderColor: '#434343',
+                    color: '#fff',
+                  }}
+                >
+                  1h
+                </Button>
+                <Button
+                  onClick={() => setIntervalRange('1d')}
+                  type={selectedInterval === '1d' ? 'primary' : 'default'}
+                  style={{
+                    backgroundColor: selectedInterval === '1d' ? '#ffb000' : '#333333',
+                    borderColor: '#434343',
+                    color: '#fff',
+                  }}
+                >
+                  1d
+                </Button>
+                <Button
+                  onClick={() => setIntervalRange('1w')}
+                  type={selectedInterval === '1w' ? 'primary' : 'default'}
+                  style={{
+                    backgroundColor: selectedInterval === '1w' ? '#ffb000' : '#333333',
+                    borderColor: '#434343',
+                    color: '#fff',
+                  }}
+                >
+                  1w
+                </Button>
+                <Button
+                  onClick={() => toggleLiveMode(true)}
+                  type={isLiveMode ? 'primary' : 'default'}
+                  style={{
+                    backgroundColor: isLiveMode ? '#ffb000' : '#333333',
+                    borderColor: '#434343',
+                    color: '#fff',
+                  }}
+                >
+                  Echtzeit
+                </Button>
+                <Button
+                  onClick={() => toggleLiveMode(false)}
+                  type={!isLiveMode ? 'primary' : 'default'}
+                  style={{
+                    backgroundColor: !isLiveMode ? '#ffb000' : '#333333',
+                    borderColor: '#434343',
+                    color: '#fff',
+                  }}
+                >
+                  Von-Bis
+                </Button>
+              </Space>
+            </Space>
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>{chartContent}</div>
+        </Modal>
+      </LocalizationProvider>
+    </ThemeProvider>
+  );
+};
+
+export default ChartPopup;

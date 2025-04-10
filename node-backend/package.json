@@ -11,6 +11,7 @@
   "description": "",
   "dependencies": {
     "@influxdata/influxdb-client": "^1.35.0",
+    "@influxdata/influxdb-client-apis": "^1.35.0",
     "axios": "^1.8.4",
     "body-parser": "^1.20.3",
     "express": "^4.21.2",
