@@ -1,257 +1,235 @@
 // src/mqttHandler.js
 const mqtt = require('mqtt');
+// Direkter Import statt Alias
+const { fetchMenuRawFromDB } = require('./menuHandler');
 
-async function fetchMenuRawFromDB(sqliteDB) {
-  return new Promise((resolve, reject) => {
-    sqliteDB.all(`
-      SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key
-      FROM menu_items mi
-      LEFT JOIN menu_properties mp ON mi.id = mp.menu_item_id
-      ORDER BY mi.sort_order ASC
-    `, [], (err, rows) => {
-      if (err) {
-        console.error("Fehler beim Abrufen des rohen Menüs:", err);
-        return reject(err);
-      }
+let fetchMenuForFrontendFn = null;
+let messageCallback = null;
+let mqttTopicLookupMap = new Map(); // Lookup-Map
 
-      const menuItems = [];
-      const itemMap = new Map();
+// Funktion zum Aufbau der MQTT Lookup-Map
+async function buildMqttTopicLookupMap(sqliteDB) {
+  console.log('[buildMqttTopicLookupMap] Starting map build...');
+  const newMap = new Map();
+  try {
+    const rawMenu = await fetchMenuRawFromDB(sqliteDB); // Direkter Aufruf
 
-      rows.forEach(row => {
-        let parsedLabel;
-        try {
-          parsedLabel = JSON.parse(row.label);
-        } catch (e) {
-          parsedLabel = row.label;
+    // Robuster Check
+    console.log('[buildMqttTopicLookupMap] Received rawMenu from fetchMenuRawFromDB:', JSON.stringify(rawMenu ? rawMenu.menuItems?.length : 'undefined', null, 2)); // Logge nur die Länge
+
+    if (!rawMenu || typeof rawMenu !== 'object') {
+        console.error("[buildMqttTopicLookupMap] fetchMenuRawFromDB hat kein Objekt zurückgegeben:", rawMenu);
+        mqttTopicLookupMap = newMap;
+        return;
+    }
+     if (!Array.isArray(rawMenu.menuItems)) {
+         console.error("[buildMqttTopicLookupMap] rawMenu.menuItems ist kein Array:", rawMenu.menuItems);
+         mqttTopicLookupMap = newMap;
+         return;
+     }
+
+    const processItems = (items) => {
+       if (!items || !Array.isArray(items)) return;
+        for (const item of items) {
+            // Stelle sicher, dass 'item' existiert und 'enable' geprüft werden kann
+            if (!item || item.enable !== true) continue; // Überspringe null/undefined/deaktivierte Items
+
+             // Verarbeite Properties
+            for (const [propKey, prop] of Object.entries(item.properties || {})) {
+                if (prop && prop.source_type === 'mqtt' && prop.source_key) {
+                    if (!newMap.has(prop.source_key)) newMap.set(prop.source_key, []);
+                    // Verhindere Duplikate
+                    if (!newMap.get(prop.source_key).some(entry => entry.menuItemLink === item.link && entry.propertyKey === propKey)) {
+                        newMap.get(prop.source_key).push({ menuItemLink: item.link, propertyKey: propKey });
+                    }
+                }
+            }
+             // Verarbeite Label
+            if (typeof item.label === 'object' && item.label !== null && item.label.source_type === 'mqtt' && item.label.source_key) {
+               if (!newMap.has(item.label.source_key)) newMap.set(item.label.source_key, []);
+                // Verhindere Duplikate
+                if (!newMap.get(item.label.source_key).some(entry => entry.menuItemLink === item.link && entry.propertyKey === 'label')) {
+                 newMap.get(item.label.source_key).push({ menuItemLink: item.link, propertyKey: 'label' });
+               }
+            }
+            // Rekursiv Sub-Items verarbeiten
+            if (item.sub) processItems(item.sub);
         }
-        if (!itemMap.has(row.id)) {
-          itemMap.set(row.id, {
-            link: row.link,
-            label: parsedLabel,
-            svg: row.svg,
-            enable: row.enable === 1,
-            properties: {},
-            sub: row.parent_id ? undefined : []
-          });
-        }
-        const item = itemMap.get(row.id);
-        if (row.key) {
-          item.properties[row.key] = {
-            value: row.value,
-            source_type: row.source_type,
-            source_key: row.source_key
-          };
-        }
-      });
+    };
 
-      itemMap.forEach((item, id) => {
-        const row = rows.find(r => r.id === id);
-        if (row.parent_id && itemMap.has(row.parent_id)) {
-          itemMap.get(row.parent_id).sub.push(item);
-        } else if (!row.parent_id) {
-          menuItems.push(item);
-        }
-      });
+    processItems(rawMenu.menuItems);
+    mqttTopicLookupMap = newMap; // Globale Map aktualisieren
+    console.log(`[buildMqttTopicLookupMap] Map build successful. Found mappings for ${mqttTopicLookupMap.size} topics.`);
 
-      resolve({ menuItems });
-    });
-  });
+  } catch (err) {
+    console.error("[buildMqttTopicLookupMap] Error during map build:", err);
+    mqttTopicLookupMap = new Map(); // Leere Map im Fehlerfall
+  }
 }
 
-let cachedMenuData = null;
-let fetchMenuForFrontendFn = null;
-let messageCallback = null; // Callback für externe Module
+// updateCachedMenuData löst jetzt nur noch den Map-Neuaufbau aus
+async function updateCachedMenuData(sqliteDB) {
+  try {
+    await buildMqttTopicLookupMap(sqliteDB);
+    console.log('[updateCachedMenuData] MQTT lookup map updated.');
+  } catch (err) {
+    console.error('[updateCachedMenuData] Fehler beim Aktualisieren der MQTT Map:', err);
+  }
+}
 
-function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
-  fetchMenuForFrontendFn = fetchMenuForFrontend;
+// setupMqtt (async, mit await für initialen Build)
+async function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
+  console.log("[setupMqtt] Initializing MQTT setup...");
+  fetchMenuForFrontendFn = fetchMenuForFrontend; // Speichern für spätere Verwendung (falls benötigt)
+
+  await buildMqttTopicLookupMap(sqliteDB); // Warte auf initialen Build
+
   const mqttClient = mqtt.connect('mqtt://192.168.10.31:1883', {
-    protocolVersion: 4,
-    clientId: 'visu-backend-' + Math.random().toString(16).substr(2, 8),
-    reconnectPeriod: 1000,
+      protocolVersion: 4,
+      clientId: 'visu-backend-' + Math.random().toString(16).substr(2, 8),
+      reconnectPeriod: 1000, // ms
+      connectTimeout: 30 * 1000, // ms
+      clean: true // Beginne mit einer sauberen Session
   });
-  const fixedTopic = 'modbus/data';
-
-  (async () => {
-    try {
-      cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
-      console.log('Initial Cached Menu Data geladen:', JSON.stringify(cachedMenuData, null, 2));
-    } catch (err) {
-      console.error('Fehler beim initialen Laden der Menüdaten:', err);
-    }
-  })();
+  const fixedTopic = 'modbus/data'; // Oder '#', um alles zu empfangen und dann zu filtern
 
   mqttClient.on('connect', () => {
     console.log('Verbunden mit MQTT-Broker');
     mqttClient.subscribe(fixedTopic, { qos: 0 }, (err) => {
-      if (err) {
-        console.error(`Fehler beim Abonnieren von ${fixedTopic}:`, err);
-      } else {
-        console.log(`Abonniert: ${fixedTopic}`);
-      }
+      if (err) console.error(`Fehler beim Abonnieren von ${fixedTopic}:`, err);
+      else console.log(`Abonniert: ${fixedTopic}`);
     });
   });
 
   mqttClient.on('message', async (topic, message) => {
-    if (topic !== fixedTopic) return;
+    // Optional: Filtern, wenn '#' abonniert wurde
+    // if (!topic.startsWith('modbus/data')) return;
 
     try {
-      const payload = JSON.parse(message.toString());
-      if (!Array.isArray(payload)) {
-        console.error('MQTT-Nachricht ist kein Array:', payload);
+      const payloadArray = JSON.parse(message.toString());
+      if (!Array.isArray(payloadArray)) {
+        // console.warn('MQTT-Nachricht ist kein Array:', payloadArray); // Kann vorkommen, ggf. weniger loggen
         return;
       }
 
-      const updates = {};
-      for (const item of payload) {
+      const updates = {}; // { 'link.propertyKey': value } oder { 'link.label': value }
+
+      for (const item of payloadArray) {
         const { topic: itemTopic, value } = item;
-        if (!itemTopic || value === undefined) {
-          console.warn('Ungültiges MQTT-Item:', item);
-          continue;
-        }
-        let foundMatch = false;
-        for (const menuItem of (cachedMenuData?.menuItems || [])) {
-          if (!menuItem.enable) continue;
-          for (const [propKey, prop] of Object.entries(menuItem.properties || {})) {
-            if (prop && prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
-              const updateKey = `${menuItem.link}.${propKey}`;
-              updates[updateKey] = value;
-              console.log(`Property hinzugefügt: ${updateKey} = ${value}`);
-              foundMatch = true;
-            }
-          }
-          if (menuItem.sub) {
-            const subFound = processSubItems(menuItem.sub, menuItem.link, itemTopic, value, updates);
-            if (subFound) {
-              foundMatch = true;
-            }
-          }
-        }
-        if (!foundMatch) {
-          console.warn(`Kein Treffer für topic '${itemTopic}' in cachedMenuData`);
+        if (itemTopic === undefined || value === undefined) {
+            // console.warn('Ungültiges MQTT-Item (topic oder value fehlt):', item); // Ggf. weniger loggen
+            continue;
         }
 
-        // Nachricht an Callback weiterleiten
+        const targets = mqttTopicLookupMap.get(itemTopic);
+
+        if (targets && targets.length > 0) {
+          targets.forEach(target => {
+            const updateKey = `${target.menuItemLink}.${target.propertyKey}`;
+            updates[updateKey] = value;
+          });
+        }
+
+        // Logging-Handler Callback
         if (messageCallback) {
           messageCallback(itemTopic, value);
         }
       }
 
       if (Object.keys(updates).length > 0) {
-        io.emit('mqtt-property-update', updates);
-        console.log('MQTT-Property-Update gesendet:', JSON.stringify(updates, null, 2));
-      } else {
-        console.warn('Keine Updates generiert für die MQTT-Nachricht');
+        io.emit('mqtt-property-update', updates); // Sende gesammelte Updates
+        // console.log('Gezielte MQTT-Property-Updates gesendet:', updates); // Weniger Logging in Produktion
       }
+
     } catch (err) {
-      console.error('Fehler beim Verarbeiten der MQTT-Nachricht:', err);
+      console.error(`Fehler beim Verarbeiten von MQTT-Nachricht für Topic '${topic}':`, err, message.toString());
     }
   });
 
-  function processSubItems(subItems, parentLink, itemTopic, value, updates) {
-    let found = false;
-    for (const subItem of subItems) {
-      if (!subItem.enable) continue;
-      for (const [propKey, prop] of Object.entries(subItem.properties || {})) {
-        if (prop && prop.source_type === 'mqtt' && prop.source_key === itemTopic) {
-          const updateKey = `${subItem.link}.${propKey}`;
-          updates[updateKey] = value;
-          console.log(`SubItem-Property hinzugefügt: ${updateKey} = ${value}`);
-          found = true;
-        }
-      }
-      if (subItem.sub) {
-        const subFound = processSubItems(subItem.sub, subItem.link, itemTopic, value, updates);
-        if (subFound) {
-          found = true;
-        }
-      }
-    }
-    return found;
-  }
+  mqttClient.on('error', (err) => console.error('MQTT-Verbindungsfehler:', err));
+  mqttClient.on('reconnect', () => console.log('Versuche, erneut mit MQTT-Broker zu verbinden...'));
+  mqttClient.on('close', () => console.log('MQTT-Verbindung geschlossen.'));
+  mqttClient.on('offline', () => console.log('MQTT-Client ist offline.'));
 
-  mqttClient.on('error', (err) => {
-    console.error('MQTT-Verbindungsfehler:', err);
-  });
-
-  mqttClient.on('reconnect', () => {
-    console.log('Versuche, erneut mit MQTT-Broker zu verbinden...');
-  });
-
+  console.log("[setupMqtt] MQTT setup complete.");
   return {
     mqttClient,
     onMessage: (callback) => {
-      messageCallback = callback; // Callback für externe Module registrieren
+      messageCallback = callback;
     }
   };
 }
 
-async function updateCachedMenuData(sqliteDB) {
-  try {
-    cachedMenuData = await fetchMenuRawFromDB(sqliteDB);
-    console.log('Cached Menu Data aktualisiert:', JSON.stringify(cachedMenuData, null, 2));
-  } catch (err) {
-    console.error('Fehler beim Aktualisieren des Cached Menu Data:', err);
-  }
+// checkAndSendMqttUpdates (bleibt vorerst unverändert)
+async function checkAndSendMqttUpdates(io, sqliteDB) {
+    console.log("[checkAndSendMqttUpdates] Wird ausgeführt...");
+    try {
+        if (!fetchMenuForFrontendFn) {
+            console.error("[checkAndSendMqttUpdates] fetchMenuForFrontendFn ist nicht verfügbar.");
+            return;
+        }
+        const currentMenu = await fetchMenuForFrontendFn(sqliteDB);
+        if (!currentMenu || !currentMenu.menuItems) {
+            console.warn('[checkAndSendMqttUpdates] Keine Menüdaten verfügbar für MQTT-Überprüfung.');
+            return;
+        }
+
+        const updates = {};
+        const dynamicKeysAndValues = new Map(); // Speichert Key und aktuellen aufgelösten Wert
+
+        // Sammle alle Keys, die von MQTT kommen könnten UND deren aktuelle Werte
+        const collectDynamicData = (items) => {
+            if (!items || !Array.isArray(items)) return;
+            for (const item of items) {
+                if (!item || item.enable !== true) continue; // Nur aktivierte Items
+
+                 // Properties prüfen
+                 for (const [key, propValue] of Object.entries(item.properties || {})) {
+                    // Finde die Rohdaten für dieses Property, um source_type zu prüfen
+                    // (Dieser Teil ist ohne Zugriff auf die rohen Daten hier komplexer)
+                    // Annahme: Wenn ein Wert da ist, könnte er von MQTT stammen.
+                    // Eine bessere Lösung wäre, die Rohdaten hier verfügbar zu haben.
+                    // Temporärer Workaround: Sende alle aktuellen Werte.
+                    const fullKey = `${item.link}.${key}`;
+                    dynamicKeysAndValues.set(fullKey, propValue); // Speichert den aufgelösten Wert
+                 }
+
+                 // Label prüfen
+                  if(typeof item.label === 'object' && item.label !== null && item.label.source_type === 'mqtt'){
+                       const fullKey = `${item.link}.label`;
+                       dynamicKeysAndValues.set(fullKey, item.label.value); // Speichert den aufgelösten Label-Wert
+                  }
+
+
+                if (item.sub) {
+                    collectDynamicData(item.sub);
+                }
+            }
+        };
+
+        collectDynamicData(currentMenu.menuItems);
+
+        // Vergleiche aktuelle Werte mit MQTT-Map und sende nur, was relevant ist
+         for (const [topic, targets] of mqttTopicLookupMap.entries()) {
+             for(const target of targets) {
+                 const updateKey = `${target.menuItemLink}.${target.propertyKey}`;
+                 if (dynamicKeysAndValues.has(updateKey)) {
+                     updates[updateKey] = dynamicKeysAndValues.get(updateKey);
+                 }
+             }
+         }
+
+
+        if (Object.keys(updates).length > 0) {
+            io.emit('mqtt-property-update', updates);
+            console.log('[checkAndSendMqttUpdates] Gezielte MQTT-Property-Updates nach Check gesendet:', updates);
+        } else {
+            console.log('[checkAndSendMqttUpdates] Keine relevanten MQTT-Property-Updates nach Check erforderlich.');
+        }
+    } catch (err) {
+        console.error('[checkAndSendMqttUpdates] Fehler beim Überprüfen der MQTT-Properties:', err);
+    }
 }
 
-async function checkAndSendMqttUpdates(io, sqliteDB) {
-  try {
-    const currentMenu = await fetchMenuForFrontendFn(sqliteDB);
-    if (!currentMenu || !currentMenu.menuItems) {
-      console.warn('Keine Menüdaten verfügbar für MQTT-Überprüfung.');
-      return;
-    }
-    const updates = {};
-    const dynamicKeys = new Set();
-    const collectDynamicKeys = (items) => {
-      for (const item of items) {
-        if (!item) continue;
-        for (const [key, prop] of Object.entries(item.properties || {})) {
-          if (prop && prop.source_type === 'mqtt') {
-            dynamicKeys.add(`${item.link}.${key}`);
-          }
-        }
-        if (item.sub && Array.isArray(item.sub)) {
-          collectDynamicKeys(item.sub);
-        }
-      }
-    };
-    if (cachedMenuData?.menuItems) {
-      collectDynamicKeys(cachedMenuData.menuItems);
-    }
-    const collectUpdates = (items) => {
-      for (const item of items) {
-        if (!item) continue;
-        if (item.enable !== true) {
-          continue;
-        }
-        for (const [propKey, propValue] of Object.entries(item.properties || {})) {
-          const fullKey = `${item.link}.${propKey}`;
-          if (dynamicKeys.has(fullKey)) {
-            let sendValue;
-            if (propValue && typeof propValue === 'object' && 'value' in propValue) {
-              sendValue = propValue.value;
-            } else {
-              sendValue = propValue;
-            }
-            updates[fullKey] = sendValue;
-          }
-        }
-        if (item.sub && Array.isArray(item.sub)) {
-          collectUpdates(item.sub);
-        }
-      }
-    };
-    collectUpdates(currentMenu.menuItems);
-    if (Object.keys(updates).length > 0) {
-      io.emit('mqtt-property-update', updates);
-      console.log('MQTT-Property-Updates gesendet:', JSON.stringify(updates, null, 2));
-    } else {
-      console.log('Keine MQTT-Property-Updates erforderlich.');
-    }
-  } catch (err) {
-    console.error('Fehler beim Überprüfen der MQTT-Properties:', err);
-  }
-}
 
 module.exports = { setupMqtt, updateCachedMenuData, checkAndSendMqttUpdates };

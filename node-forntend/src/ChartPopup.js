@@ -10,17 +10,11 @@ import { useTranslation } from 'react-i18next';
 dayjs.extend(customParseFormat);
 
 const ChartPopup = ({ visible, onClose, currentPage }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [startTime, setStartTime] = useState(() => {
-    const now = dayjs();
-    return now.subtract(1, 'hour');
-  });
-  const [endTime, setEndTime] = useState(() => {
-    const now = dayjs();
-    return now;
-  });
+  const [startTime, setStartTime] = useState(() => dayjs().subtract(1, 'hour'));
+  const [endTime, setEndTime] = useState(() => dayjs());
   const [selectedInterval, setSelectedInterval] = useState('1h');
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [loggingSettings, setLoggingSettings] = useState([]);
@@ -36,6 +30,10 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
 
   const isMobile = windowDimensions.width < 768;
 
+  const updateLanguage = useCallback(() => {
+    socket.emit('set-language', { language: i18n.language });
+  }, [i18n.language]);
+
   useEffect(() => {
     const handleResize = () => {
       setWindowDimensions({
@@ -43,18 +41,23 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         height: window.innerHeight,
       });
     };
-
     window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   useEffect(() => {
     if (visible) {
+      updateLanguage();
       socket.emit('request-logging-settings');
     }
-  }, [visible]);
+  }, [visible, updateLanguage]);
+
+  useEffect(() => {
+    updateLanguage();
+    if (visible) {
+      socket.emit('request-logging-settings');
+    }
+  }, [i18n.language, visible, updateLanguage]);
 
   useEffect(() => {
     const handleChartDataUpdate = (data) => {
@@ -72,9 +75,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         });
       });
 
-      // console.log('Topics aus Daten:', Array.from(topics));
-      // console.log('Aktuelle loggingSettings:', loggingSettings);
-
       topics.forEach(topic => {
         const setting = loggingSettings.find(s => s.topic === topic);
         const series = {
@@ -85,7 +85,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
           })),
         };
         formattedData.push(series);
-        // console.log(`Topic: ${topic}, Description: ${setting?.description || 'Keine Beschreibung'}`);
       });
 
       setChartData(formattedData);
@@ -102,18 +101,15 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     };
 
     const handleChartDataError = (error) => {
-      // console.error('Fehler vom Socket:', error);
       message.error(`Fehler: ${error.message}`);
       setLoading(false);
     };
 
     const handleChartDataWarning = (warning) => {
-      // console.warn('Warnung vom Socket:', warning);
       message.warning(warning.message);
     };
 
     const handleLoggingSettingsUpdate = (data) => {
-      // console.log('Logging-Einstellungen empfangen:', data);
       setLoggingSettings(data);
     };
 
@@ -139,17 +135,14 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
 
     if (!start) {
       message.error('Bitte wählen Sie eine Startzeit aus.');
-      // console.log('Fehler: Startzeit fehlt', { start });
       return;
     }
     if (!liveMode && !end) {
       message.error('Bitte wählen Sie eine Endzeit aus.');
-      // console.log('Fehler: Endzeit fehlt', { end });
       return;
     }
     if (!liveMode && start.isAfter(end)) {
       message.error('Startzeit muss vor Endzeit liegen.');
-      // console.log('Fehler: Startzeit nach Endzeit', { start: start.format('YYYY-MM-DD HH:mm'), end: end.format('YYYY-MM-DD HH:mm') });
       return;
     }
 
@@ -159,7 +152,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       end: liveMode ? 'now()' : (dayjs.isDayjs(end) ? end.toISOString() : dayjs().toISOString()),
       page: page,
     };
-    // console.log('Sende Daten an Socket:', params);
     socket.emit('request-chart-data', params);
   }, []);
 
@@ -170,7 +162,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         fetchData(startTime, endTime, isLiveMode, currentPage);
       }, 30 * 1000);
     }
-
     return () => {
       if (intervalIdRef.current) {
         clearInterval(intervalIdRef.current);
@@ -181,7 +172,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
 
   useEffect(() => {
     if (visible && !hasRequestedInitialData.current) {
-      // console.log('Popup geöffnet, initiale Zeitpunkte:', { start: startTime.format('YYYY-MM-DD HH:mm'), end: isLiveMode ? 'Jetzt' : endTime.format('YYYY-MM-DD HH:mm') });
       shouldFetchData.current = true;
       fetchData(startTime, endTime, isLiveMode, currentPage);
       hasRequestedInitialData.current = true;
@@ -220,7 +210,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     setSelectedInterval(interval);
     setStartTime(start);
     setEndTime(now);
-    // console.log(`Intervall ${interval} ausgewählt:`, { start: start.format('YYYY-MM-DD HH:mm'), end: now.format('YYYY-MM-DD HH:mm') });
     shouldFetchData.current = true;
     fetchData(start, now, isLiveMode, currentPage);
   };
@@ -251,7 +240,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
     const newEnd = isLiveMode ? dayjs() : dayjs(endTime.valueOf() + shift);
     setStartTime(newStart);
     setEndTime(newEnd);
-    // console.log(`Zeitbereich verschoben (${direction}):`, { start: newStart.format('YYYY-MM-DD HH:mm'), end: isLiveMode ? 'Jetzt' : newEnd.format('YYYY-MM-DD HH:mm') });
     shouldFetchData.current = true;
     fetchData(newStart, newEnd, isLiveMode, currentPage);
   };
@@ -266,13 +254,11 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
       );
       setStartTime(start);
       setEndTime(now);
-      // console.log('Echtzeit-Modus aktiviert:', { start: start.format('YYYY-MM-DD HH:mm'), end: 'Jetzt' });
       shouldFetchData.current = true;
       fetchData(start, now, true, currentPage);
     } else {
       const now = dayjs();
       setEndTime(now);
-      // console.log('Von-Bis-Modus aktiviert:', { start: startTime.format('YYYY-MM-DD HH:mm'), end: now.format('YYYY-MM-DD HH:mm') });
       shouldFetchData.current = true;
       fetchData(startTime, now, false, currentPage);
     }
@@ -303,7 +289,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
 
     const visibleChartData = chartData.filter(series => visibleSeries[series.id]);
 
-    // console.log('ChartData für Legende:', chartData);
     const legendData = chartData.map(d => {
       const setting = loggingSettings.find(s => s.topic === d.id);
       return {
@@ -312,7 +297,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         color: setting?.color || '#ffffff',
       };
     });
-    // console.log('LegendData:', legendData);
 
     const maxLabelLength = legendData.reduce((max, item) => {
       const labelLength = item.label.length;
@@ -500,7 +484,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
         },
       }}
       wrapClassName="fullscreen-modal"
-
     >
       <div
         style={{
@@ -522,7 +505,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             onClick={() => shiftTimeRange('backward')}
             style={{ backgroundColor: '#333333', borderColor: '#434343', color: '#fff' }}
           />
-          {/* Zeitintervall-Buttons */}
           <Button
             size={isMobile ? 'large' : 'middle'}
             onClick={() => setIntervalRange('1h')}
@@ -583,7 +565,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
           >
             {t('Range')}
           </Button>
-          {/* Zeitbereichsauswahl */}
           <Space size={4} align="center">
             <span style={{ color: '#fff', fontSize: isMobile ? 12 : 14 }}>{t('from')}:</span>
             <DatePicker
@@ -593,13 +574,11 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
               onChange={(date) => {
                 if (date) {
                   setStartTime(date);
-                  // console.log('Startzeit ausgewählt:', date.format('YYYY-MM-DD HH:mm'));
                   shouldFetchData.current = true;
                   fetchData(date, endTime, isLiveMode, currentPage);
                 } else {
                   const now = dayjs();
                   setStartTime(now.subtract(1, 'hour'));
-                  // console.log('Startzeit zurückgesetzt:', now.subtract(1, 'hour').format('YYYY-MM-DD HH:mm'));
                   shouldFetchData.current = true;
                   fetchData(now.subtract(1, 'hour'), endTime, isLiveMode, currentPage);
                 }
@@ -619,13 +598,11 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
                   onChange={(date) => {
                     if (date) {
                       setEndTime(date);
-                      // console.log('Endzeit ausgewählt:', date.format('YYYY-MM-DD HH:mm'));
                       shouldFetchData.current = true;
                       fetchData(startTime, date, isLiveMode, currentPage);
                     } else {
                       const now = dayjs();
                       setEndTime(now);
-                      // console.log('Endzeit zurückgesetzt:', now.format('YYYY-MM-DD HH:mm'));
                       shouldFetchData.current = true;
                       fetchData(startTime, now, isLiveMode, currentPage);
                     }
@@ -645,7 +622,6 @@ const ChartPopup = ({ visible, onClose, currentPage }) => {
             style={{ backgroundColor: '#333333', borderColor: '#434343', color: '#fff' }}
           />
         </Space>
-        {/* Rechter Bereich bleibt leer oder kann für andere Elemente genutzt werden */}
         <Space size="large" wrap />
       </div>
       <div style={{ flex: 1, overflow: 'hidden', width: '100%' }}>{chartContent}</div>
