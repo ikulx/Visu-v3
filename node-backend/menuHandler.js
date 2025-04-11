@@ -74,7 +74,7 @@ async function resolvePropertyValue(sqliteDB, property) {
 // Funktion zum Auflösen des Labels
 async function resolveLabelValue(sqliteDB, label) {
   if (typeof label !== 'object' || label === null || !label.source_type) {
-      return label;
+      return label; // Return original label if not a dynamic/resolvable object
   }
   if (label.source_type === 'static') {
     return label.value;
@@ -97,9 +97,8 @@ async function resolveLabelValue(sqliteDB, label) {
 
 // Funktion zum Abrufen der rohen Menüdaten aus der Datenbank (mit mehr Logging)
 async function fetchMenuRawFromDB(sqliteDB) {
-  console.log("[fetchMenuRawFromDB] Trying to fetch raw menu data..."); // Log Start
+  console.log("[fetchMenuRawFromDB] Trying to fetch raw menu data...");
   return new Promise((resolve, reject) => {
-    // Stelle sicher, dass die DB-Instanz gültig ist
     if (!sqliteDB || typeof sqliteDB.all !== 'function') {
         console.error("[fetchMenuRawFromDB] Ungültige sqliteDB Instanz übergeben.");
         return reject(new Error("Ungültige Datenbankinstanz."));
@@ -107,14 +106,16 @@ async function fetchMenuRawFromDB(sqliteDB) {
 
     sqliteDB.all(
       `
-      SELECT mi.*, mp.id AS prop_id, mp.key, mp.value, mp.source_type, mp.source_key,
-             ma.id AS action_id, ma.action_name, ma.qhmi_variable_name,
-             msc.id AS condition_id, msc.value AS condition_value, msc.svg AS condition_svg -- Alias für value hinzugefügt
+      SELECT
+          mi.id, mi.label, mi.link, mi.svg, mi.enable, mi.parent_id, mi.sort_order, mi.qhmiVariable, mi.created_at, mi.updated_at,
+          mp.id AS prop_id, mp.key AS prop_key, mp.value AS prop_value, mp.source_type AS prop_source_type, mp.source_key AS prop_source_key,
+          ma.id AS action_id, ma.action_name, ma.qhmi_variable_name,
+          msc.id AS condition_id, msc.value AS condition_value, msc.svg AS condition_svg
       FROM menu_items mi
       LEFT JOIN menu_properties mp ON mi.id = mp.menu_item_id
       LEFT JOIN menu_actions ma ON mi.id = ma.menu_item_id
       LEFT JOIN menu_svg_conditions msc ON mi.id = msc.menu_item_id
-      ORDER BY mi.id ASC, mi.sort_order ASC
+      ORDER BY mi.parent_id ASC, mi.sort_order ASC, mi.id ASC
       `,
       [],
       (err, rows) => {
@@ -125,48 +126,61 @@ async function fetchMenuRawFromDB(sqliteDB) {
 
         console.log(`[fetchMenuRawFromDB] SQL query successful, received ${rows ? rows.length : 'null'} rows.`);
 
-        const menuItems = [];
-        const itemMap = new Map(); // Map zur Deduplizierung von menu_items
+        const itemMap = new Map(); // Map zur Speicherung und Deduplizierung von menu_items
 
         if (rows && Array.isArray(rows)) {
           rows.forEach((row) => {
-              if (!row || row.id == null) return;
+              if (!row || row.id == null) return; // Überspringe ungültige Zeilen
 
+              // Initialisiere Item, falls noch nicht vorhanden
               if (!itemMap.has(row.id)) {
                   let parsedLabel;
+                  // Versuche, das Label zu parsen, falls es ein JSON-String ist
                   try {
-                      parsedLabel = row.label && typeof row.label === 'string' ? JSON.parse(row.label) : row.label;
+                      // Nur parsen, wenn es ein String ist und mit { beginnt (vereinfachte Prüfung)
+                      if (typeof row.label === 'string' && row.label.trim().startsWith('{')) {
+                          parsedLabel = JSON.parse(row.label);
+                      } else {
+                           // Behandle es als einfachen String oder behalte den Wert, wenn es bereits ein Objekt ist
+                          parsedLabel = typeof row.label === 'string' ? { value: row.label, source_type: 'static', source_key: null } : row.label;
+                      }
+                      // Fallback, falls parsedLabel immer noch kein Objekt ist
+                      if (typeof parsedLabel !== 'object' || parsedLabel === null) {
+                           parsedLabel = { value: String(parsedLabel), source_type: 'static', source_key: null };
+                      }
                   } catch (e) {
-                      parsedLabel = row.label;
+                       console.warn(`[fetchMenuRawFromDB] Fehler beim Parsen des Labels für Item ${row.id}. Verwende als String:`, row.label, e);
+                       // Fallback auf einfachen String im Fehlerfall
+                      parsedLabel = { value: String(row.label), source_type: 'static', source_key: null };
                   }
 
                   itemMap.set(row.id, {
                     id: row.id,
                     link: row.link,
-                    label: parsedLabel,
+                    label: parsedLabel, // Jetzt immer ein Objekt
                     svg: row.svg,
-                    enable: row.enable === 1,
+                    enable: row.enable === 1 || row.enable === true || row.enable === 'true', // Robustere Prüfung
                     qhmiVariable: row.qhmiVariable,
                     svgConditions: [],
                     properties: {},
                     actions: {},
                     parent_id: row.parent_id,
                     sort_order: row.sort_order,
-                    sub: undefined
+                    sub: [] // Immer ein Array initialisieren
                   });
               }
               const item = itemMap.get(row.id);
 
-              // Properties hinzufügen
-              if (row.prop_id != null && row.key && !item.properties[row.key]) {
-                  item.properties[row.key] = {
-                    value: row.value,
-                    source_type: row.source_type,
-                    source_key: row.source_key
+              // Properties hinzufügen (dedupliziert)
+              if (row.prop_id != null && row.prop_key && !item.properties[row.prop_key]) {
+                  item.properties[row.prop_key] = {
+                    value: row.prop_value,
+                    source_type: row.prop_source_type || 'static', // Default zu static
+                    source_key: row.prop_source_key
                   };
               }
 
-              // Actions hinzufügen
+              // Actions hinzufügen (dedupliziert)
               if (row.action_id != null && row.action_name && row.qhmi_variable_name) {
                   if (!item.actions[row.action_name]) {
                     item.actions[row.action_name] = [];
@@ -176,7 +190,7 @@ async function fetchMenuRawFromDB(sqliteDB) {
                   }
               }
 
-              // SVG Conditions hinzufügen
+              // SVG Conditions hinzufügen (dedupliziert)
               if (row.condition_id != null && row.condition_value != null && row.condition_svg != null) {
                    const conditionExists = item.svgConditions.some(
                      cond => cond.value === row.condition_value && cond.svg === row.condition_svg
@@ -187,19 +201,20 @@ async function fetchMenuRawFromDB(sqliteDB) {
               }
           });
 
-          // Hierarchie aufbauen und sortieren
+          // Hierarchie aufbauen
+          const menuItems = [];
           itemMap.forEach((item) => {
             if (item.parent_id && itemMap.has(item.parent_id)) {
               const parent = itemMap.get(item.parent_id);
+              // Sicherstellen, dass sub existiert (sollte durch Initialisierung der Fall sein)
               if (!parent.sub) parent.sub = [];
               parent.sub.push(item);
-            } else if (!item.parent_id) {
-              if (!item.sub) item.sub = []; // Sicherstellen, dass Top-Level 'sub' hat
+            } else if (item.parent_id == null) { // Nur Top-Level Items hinzufügen
               menuItems.push(item);
             }
           });
 
-           // Sortiere Top-Level und Sub-Level Items
+           // Sortiere Top-Level und Sub-Level Items nach sort_order
             const sortBySortOrder = (a, b) => (a.sort_order || 0) - (b.sort_order || 0);
             menuItems.sort(sortBySortOrder);
             itemMap.forEach(item => {
@@ -208,12 +223,13 @@ async function fetchMenuRawFromDB(sqliteDB) {
                 }
             });
 
-        } else {
-             console.warn("[fetchMenuRawFromDB] Die Datenbankabfrage hat keine Zeilen zurückgegeben oder das Ergebnis war kein Array.");
-        }
+          console.log(`[fetchMenuRawFromDB] Resolving promise with ${menuItems.length} top-level menu items.`);
+          resolve({ menuItems }); // Immer mit diesem Objekt auflösen
 
-        console.log(`[fetchMenuRawFromDB] Resolving promise with ${menuItems.length} top-level menu items.`);
-        resolve({ menuItems }); // Immer mit diesem Objekt auflösen
+        } else {
+             console.warn("[fetchMenuRawFromDB] Die Datenbankabfrage hat keine Zeilen zurückgegeben.");
+             resolve({ menuItems: [] }); // Leeres Menü zurückgeben
+        }
       }
     );
   });
@@ -226,30 +242,40 @@ async function resolveMenuStructure(sqliteDB, items) {
   if (!Array.isArray(items)) return resolvedItems;
 
   for (const item of items) {
-      if (!item) continue;
+      if (!item) continue; // Überspringe null/undefined Items
 
-      let resolvedLabel = item.label;
-      let resolvedEnable = item.enable;
+      let resolvedLabel = item.label; // Standard: Objekt oder String
+      let resolvedEnable = item.enable; // Standard
 
-      // Label auflösen und 'enable' anpassen
-      if (typeof item.label === 'object' && item.label.source_type === 'dynamic' && item.label.source_key) {
-          resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
-          try {
-               const row = await new Promise((resolve, reject) => {
-                  sqliteDB.get(`SELECT visible FROM QHMI_VARIABLES WHERE NAME = ?`, [item.label.source_key], (err, row) => (err ? reject(err) : resolve(row)));
-               });
-               if (row && row.visible !== undefined) {
-                    resolvedEnable = row.visible === '1' || row.visible === true || row.visible === 1;
-               }
-          } catch (err) {
-                console.error(`Fehler beim Abrufen von 'visible' für ${item.label.source_key}:`, err);
-                resolvedEnable = item.enable; // Behalte ursprünglichen Wert
+       // Wenn Label ein Objekt ist, versuche es aufzulösen
+      if (typeof item.label === 'object' && item.label !== null && item.label.source_type) {
+           resolvedLabel = await resolveLabelValue(sqliteDB, item.label); // Gibt den aufgelösten String zurück
+
+           // Prüfe 'visible' nur, wenn es eine dynamische Quelle gibt
+          if (item.label.source_type === 'dynamic' && item.label.source_key) {
+                try {
+                    const row = await new Promise((resolve, reject) => {
+                        sqliteDB.get(`SELECT visible FROM QHMI_VARIABLES WHERE NAME = ?`, [item.label.source_key], (err, row) => (err ? reject(err) : resolve(row)));
+                    });
+                    // Überschreibe 'enable' nur, wenn 'visible' explizit gefunden wurde
+                    if (row && row.visible !== undefined && row.visible !== null) {
+                        resolvedEnable = row.visible === '1' || row.visible === true || row.visible === 1;
+                    }
+                } catch (err) {
+                    console.error(`Fehler beim Abrufen von 'visible' für ${item.label.source_key}:`, err);
+                    // Behalte den ursprünglichen 'enable'-Wert bei Fehler
+                }
           }
-      } else if (typeof item.label === 'object') {
-         resolvedLabel = await resolveLabelValue(sqliteDB, item.label);
+      } else if (typeof item.label === 'string') {
+          // Wenn Label nur ein String ist, behalte ihn bei
+          resolvedLabel = item.label;
+      } else {
+          // Fallback für unerwartete Label-Formate
+          resolvedLabel = '?';
       }
 
-      // Überspringe, wenn nicht aktiviert
+
+      // Überspringe, wenn nicht aktiviert (basierend auf DB oder dynamischer Auflösung)
       if (!resolvedEnable) continue;
 
       // Eigenschaften auflösen
@@ -262,14 +288,14 @@ async function resolveMenuStructure(sqliteDB, items) {
 
       // Sub-Menü rekursiv auflösen
       let resolvedSub = [];
-      if (item.sub && item.sub.length > 0) {
+      if (item.sub && Array.isArray(item.sub) && item.sub.length > 0) {
           resolvedSub = await resolveMenuStructure(sqliteDB, item.sub);
       }
 
       resolvedItems.push({
           ...item,
-          label: resolvedLabel,
-          enable: resolvedEnable,
+          label: resolvedLabel, // Aufgelöstes Label (String)
+          enable: resolvedEnable, // Aktualisierter Enable-Status
           properties,
           sub: resolvedSub
       });
@@ -278,29 +304,35 @@ async function resolveMenuStructure(sqliteDB, items) {
 }
 
 
-// Menü für das Frontend vorbereiten (jetzt mit Filterung)
+// Menü für das Frontend vorbereiten (jetzt mit Filterung und SVG-Auflösung)
 async function fetchMenuForFrontend(sqliteDB) {
   try {
       const rawMenu = await fetchMenuRawFromDB(sqliteDB);
       if (!rawMenu || !Array.isArray(rawMenu.menuItems)) {
-           console.error("[fetchMenuForFrontend] Konnte keine rohen Menüdaten abrufen.");
-           return defaultMenu;
+           console.error("[fetchMenuForFrontend] Konnte keine rohen Menüdaten abrufen oder menuItems ist kein Array.");
+           return defaultMenu; // Fallback auf Default
       }
 
+       // Hole zuerst alle benötigten Variablen auf einmal
       const qhmiVariables = await fetchQhmiVariables(sqliteDB);
 
-      // SVG-Auflösung
+      // Funktion zur SVG-Auflösung (jetzt mit Zugriff auf globale Variablen)
       const resolveSvg = (item) => {
           if (item && item.qhmiVariable && item.svgConditions && Array.isArray(item.svgConditions)) {
-              const variableValue = String(qhmiVariables[item.qhmiVariable]); // Sicherstellen, dass es ein String ist
+              const variableValue = String(qhmiVariables[item.qhmiVariable]); // Wert aus dem Cache holen
               const condition = item.svgConditions.find(cond => String(cond.value) === variableValue);
-              if (condition && condition.svg) item.svg = condition.svg;
+              if (condition && condition.svg) {
+                  item.svg = condition.svg; // SVG im Item-Objekt direkt ändern
+              }
           }
           if (item && item.sub && Array.isArray(item.sub)) {
-              item.sub.forEach(subItem => resolveSvg(subItem));
+              item.sub.forEach(subItem => resolveSvg(subItem)); // Rekursiv für Sub-Items
           }
       };
+
+      // Wende SVG-Auflösung auf die *rohen* Daten an, bevor sie weiterverarbeitet werden
       rawMenu.menuItems.forEach(item => resolveSvg(item));
+
 
       // Labels/Properties auflösen UND Deaktivierte filtern
       const resolvedAndFilteredMenuItems = await resolveMenuStructure(sqliteDB, rawMenu.menuItems);
@@ -308,7 +340,7 @@ async function fetchMenuForFrontend(sqliteDB) {
       return { menuItems: resolvedAndFilteredMenuItems };
   } catch (error) {
        console.error("[fetchMenuForFrontend] Fehler beim Aufbereiten des Menüs:", error);
-       return defaultMenu;
+       return defaultMenu; // Fallback auf Default bei Fehlern
   }
 }
 
@@ -319,11 +351,26 @@ async function insertMenuItemRecursive(sqliteDB, item, parentId = null, sortOrde
         console.warn("[insertMenuItemRecursive] Ungültiges Item übersprungen:", item);
         return;
     }
-    // Standardwerte und Validierung
-    const labelValue = typeof item.label === 'object' ? JSON.stringify(item.label) : (item.label || 'Unbenannt');
+
+    // Label-Behandlung: Speichere das Objekt als JSON-String oder nur den String-Wert
+    let labelToSave;
+    if (typeof item.label === 'object' && item.label !== null) {
+        // Stelle sicher, dass source_type und source_key existieren, wenn nötig
+        if (!item.label.source_type) item.label.source_type = 'static';
+        if (!item.label.source_key) item.label.source_key = null;
+        labelToSave = JSON.stringify(item.label);
+    } else {
+         // Wenn es nur ein String ist, speichere ihn direkt (oder konvertiere zu Objekt-Struktur)
+        // Option A: Nur String speichern (DB-Spalte muss TEXT sein)
+        // labelToSave = String(item.label || 'Unbenannt');
+        // Option B: Immer als Objekt speichern für Konsistenz
+         labelToSave = JSON.stringify({ value: String(item.label || 'Unbenannt'), source_type: 'static', source_key: null });
+    }
+
+
     const linkValue = item.link || null;
     const svgValue = item.svg || 'default';
-    const enableValue = item.enable !== undefined ? (item.enable ? 1 : 0) : 1;
+    const enableValue = item.enable === true || item.enable === 'true' || item.enable === 1 ? 1 : 0; // Robuster Check
     const qhmiVariableValue = item.qhmiVariable || null;
 
     // Einfügen des Haupteintrags
@@ -331,7 +378,7 @@ async function insertMenuItemRecursive(sqliteDB, item, parentId = null, sortOrde
       sqliteDB.run(
         `INSERT INTO menu_items (label, link, svg, enable, parent_id, sort_order, qhmiVariable)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [labelValue, linkValue, svgValue, enableValue, parentId, sortOrder, qhmiVariableValue],
+        [labelToSave, linkValue, svgValue, enableValue, parentId, sortOrder, qhmiVariableValue],
         function (err) { if (err) reject(err); else resolve(this.lastID); }
       );
     });
@@ -345,6 +392,10 @@ async function insertMenuItemRecursive(sqliteDB, item, parentId = null, sortOrde
         if (propData && typeof propData === 'object') {
             await runDb(`INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) VALUES (?, ?, ?, ?, ?)`,
                         [itemId, key, propData.value, propData.source_type || 'static', propData.source_key || null]);
+        } else {
+            // Fallback falls 'properties' einfache Key-Value-Paare enthält
+             await runDb(`INSERT INTO menu_properties (menu_item_id, key, value, source_type, source_key) VALUES (?, ?, ?, ?, ?)`,
+                         [itemId, key, propData, 'static', null]);
         }
       }
     }
@@ -357,6 +408,9 @@ async function insertMenuItemRecursive(sqliteDB, item, parentId = null, sortOrde
                await runDb(`INSERT INTO menu_actions (menu_item_id, action_name, qhmi_variable_name) VALUES (?, ?, ?)`,
                            [itemId, actionName, qhmiVariableName]);
              }
+         } else if (typeof qhmiVariableNames === 'string') { // Einzelner String erlaubt?
+              await runDb(`INSERT INTO menu_actions (menu_item_id, action_name, qhmi_variable_name) VALUES (?, ?, ?)`,
+                          [itemId, actionName, qhmiVariableNames]);
          }
       }
     }
@@ -391,87 +445,100 @@ async function insertMenuItems(sqliteDB, items) {
 // --- Menu Handler Setup ---
 function setupMenuHandlers(io, sqliteDB, updateCachedMenuData, fetchMenuForFrontend, fetchMenuRawFromDB, insertMenuItems) {
 
-  const loadInitialMenu = async () => { /* ... (wie vorher) ... */ };
-  let currentMenuPromise = loadInitialMenu();
-
   io.on('connection', async (socket) => {
-      console.log(`[MenuHandler] Client ${socket.id} verbunden, sende initiales Menü...`);
-      try {
-         const menuToSend = await currentMenuPromise;
-         socket.emit('menu-update', menuToSend);
-      } catch (err) {
-           console.error(`[MenuHandler] Fehler beim Senden des initialen Menüs an ${socket.id}:`, err);
-           socket.emit('menu-update', defaultMenu);
-      }
+      console.log(`[MenuHandler] Client ${socket.id} verbunden.`);
+      // Sende initiales, aufbereitetes Menü (wird meist von server.js getriggert)
+      // ... (Der Code dafür ist typischerweise in server.js unter io.on('connection'))
 
-    // Listener für Konfigurations-Updates vom Client
-    socket.on('update-menu-config', async (newMenu) => {
-      console.log("[MenuHandler update-menu-config] Empfangen:", newMenu ? 'Daten erhalten' : 'Keine Daten');
-      if (!newMenu || !Array.isArray(newMenu.menuItems)) {
-          console.error("[MenuHandler update-menu-config] Ungültiges Menüformat empfangen.");
-          socket.emit('menu-config-error', { message: 'Ungültiges Menüformat gesendet.' });
-          return;
-      }
-      try {
-          // Transaktion für Löschen und Einfügen
-          await new Promise((resolve, reject) => {
-              sqliteDB.run('BEGIN TRANSACTION', async (beginErr) => {
-                  if (beginErr) return reject(beginErr);
-                  try {
-                      await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_properties`, (err) => err ? rej(err) : res()));
-                      await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_actions`, (err) => err ? rej(err) : res()));
-                      await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_svg_conditions`, (err) => err ? rej(err) : res()));
-                      await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_items`, (err) => err ? rej(err) : res()));
-                      console.log("[MenuHandler update-menu-config] Alte Menüdaten gelöscht.");
+      // Listener für Konfigurations-Anfragen (um den Baum im Modal zu füllen)
+      socket.on('request-menu-config', async () => {
+          console.log(`[MenuHandler] Client ${socket.id} fordert rohe Menü-Konfiguration an.`);
+          try {
+              const rawMenuData = await fetchMenuRawFromDB(sqliteDB);
+              console.log(`[MenuHandler] Sende rohe Menü-Konfiguration an ${socket.id}.`);
+              socket.emit('menu-config-update', rawMenuData); // Event, auf das das Modal lauscht
+          } catch (err) {
+              console.error(`[MenuHandler] Fehler beim Abrufen der rohen Menü-Konfiguration für ${socket.id}:`, err);
+              socket.emit('menu-config-error', { message: 'Fehler beim Laden der Menü-Konfiguration.' });
+          }
+      });
 
-                      await insertMenuItems(sqliteDB, newMenu.menuItems); // Neue Daten einfügen
-                      console.log("[MenuHandler update-menu-config] Neue Menüdaten eingefügt.");
+      // Listener für Konfigurations-Updates vom Client (Speichern)
+      socket.on('update-menu-config', async (newMenu) => {
+          console.log("[MenuHandler update-menu-config] Empfangen:", newMenu ? 'Daten erhalten' : 'Keine Daten');
+          if (!newMenu || !Array.isArray(newMenu.menuItems)) {
+              console.error("[MenuHandler update-menu-config] Ungültiges Menüformat empfangen.");
+              socket.emit('menu-config-error', { message: 'Ungültiges Menüformat gesendet.' });
+              return;
+          }
+          try {
+              // Transaktion für Löschen und Einfügen
+              await new Promise((resolve, reject) => {
+                  sqliteDB.run('BEGIN TRANSACTION', async (beginErr) => {
+                      if (beginErr) return reject(beginErr);
+                      try {
+                          // Alte Daten löschen (Reihenfolge beachten wegen Foreign Keys)
+                          await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_properties`, (err) => err ? rej(err) : res()));
+                          await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_actions`, (err) => err ? rej(err) : res()));
+                          await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_svg_conditions`, (err) => err ? rej(err) : res()));
+                          await new Promise((res, rej) => sqliteDB.run(`DELETE FROM menu_items`, (err) => err ? rej(err) : res()));
+                          console.log("[MenuHandler update-menu-config] Alte Menüdaten gelöscht.");
 
-                      await new Promise((res, rej) => sqliteDB.run('COMMIT', (err) => err ? rej(err) : res()));
-                      resolve();
-                  } catch (processErr) {
-                      console.error("[MenuHandler update-menu-config] Fehler während der Transaktion, führe Rollback aus:", processErr);
-                      sqliteDB.run('ROLLBACK');
-                      reject(processErr);
-                  }
+                          await insertMenuItems(sqliteDB, newMenu.menuItems); // Neue Daten einfügen
+                          console.log("[MenuHandler update-menu-config] Neue Menüdaten eingefügt.");
+
+                          await new Promise((res, rej) => sqliteDB.run('COMMIT', (err) => err ? rej(err) : res()));
+                          resolve();
+                      } catch (processErr) {
+                          console.error("[MenuHandler update-menu-config] Fehler während der Transaktion, führe Rollback aus:", processErr);
+                          sqliteDB.run('ROLLBACK', rollbackErr => {
+                              if(rollbackErr) console.error("Rollback Error:", rollbackErr);
+                          });
+                          reject(processErr);
+                      }
+                  });
               });
-          });
 
-          console.log("[MenuHandler update-menu-config] Datenbank erfolgreich aktualisiert.");
+              console.log("[MenuHandler update-menu-config] Datenbank erfolgreich aktualisiert.");
 
-          // Neues Menü laden und cachen
-          const updatedMenuForFrontend = await fetchMenuForFrontend(sqliteDB);
-          currentMenuPromise = Promise.resolve(updatedMenuForFrontend);
+              // Neues aufbereitetes Menü laden für Live-Update an alle Clients
+              const updatedMenuForFrontend = await fetchMenuForFrontend(sqliteDB);
 
-          // MQTT-Map aktualisieren
-          await updateCachedMenuData(sqliteDB);
+              // MQTT-Map aktualisieren (wichtig nach Menüänderung)
+              if (updateCachedMenuData) {
+                  await updateCachedMenuData(sqliteDB);
+              } else {
+                  console.warn("[MenuHandler] updateCachedMenuData Funktion nicht verfügbar zum Aktualisieren der MQTT Map.");
+              }
 
-          // Erfolg an Client senden
-          const rawMenuForClient = await fetchMenuRawFromDB(sqliteDB);
-          socket.emit('menu-config-success', { message: 'Menü erfolgreich aktualisiert', menu: rawMenuForClient });
 
-          // Update an alle Clients senden
-          io.emit('menu-update', updatedMenuForFrontend);
-          console.log('[MenuHandler update-menu-config] Menü erfolgreich aktualisiert und an alle Clients gesendet.');
+              // Erfolg und die NEUEN ROHEN Daten an den anfragenden Client senden
+              const rawMenuForClient = await fetchMenuRawFromDB(sqliteDB);
+              socket.emit('menu-config-success', { message: 'Menü erfolgreich aktualisiert', menu: rawMenuForClient });
 
-      } catch (err) {
-          console.error('[MenuHandler update-menu-config] Fehler beim Aktualisieren des Menüs:', err);
-          socket.emit('menu-config-error', { message: 'Fehler beim Speichern des Menüs: ' + (err.message || 'Unbekannter Fehler') });
-      }
-    });
+              // Update des aufbereiteten Menüs an alle Clients senden
+              io.emit('menu-update', updatedMenuForFrontend);
+              console.log('[MenuHandler update-menu-config] Menü erfolgreich aktualisiert und an alle Clients gesendet.');
 
-    // Listener für Konfigurations-Anfragen
-    socket.on('request-menu-config', async () => { /* ... (wie vorher) ... */ });
-  });
+          } catch (err) {
+              console.error('[MenuHandler update-menu-config] Fehler beim Aktualisieren des Menüs:', err);
+              socket.emit('menu-config-error', { message: 'Fehler beim Speichern des Menüs: ' + (err.message || 'Unbekannter Fehler') });
+          }
+        });
 
-  return { fetchMenuForFrontend };
-}
+    }); // Ende io.on('connection')
 
-// Exporte
+    // Gib die benötigten Funktionen zurück
+    return { fetchMenuForFrontend, fetchMenuRawFromDB, insertMenuItems };
+} // Ende setupMenuHandlers
+
+// --- Exporte ---
 module.exports = {
   fetchMenuRawFromDB,
   fetchMenuForFrontend,
   insertMenuItems,
   setupMenuHandlers,
-  defaultMenu
+  defaultMenu,
+  resolveLabelValue, // Exportieren, falls von extern benötigt
+  resolvePropertyValue // Exportieren, falls von extern benötigt
 };
