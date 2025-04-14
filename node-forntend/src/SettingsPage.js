@@ -198,7 +198,7 @@ const SettingsPage = ({ visible, onClose, user }) => {
       title={t('Settings')}
       width={xs ? "100%" : "80%"}
       style={{ top: 0 }}
-      bodyStyle={{ padding: 0, overflow: 'hidden', backgroundColor: '#141414', color: '#fff' }}
+      body={{ padding: 0, overflow: 'hidden', backgroundColor: '#141414', color: '#fff' }}
       maskProps={{ style: { backgroundColor: 'rgba(0,0,0,0.7)' } }}
     >
       {xs ? (

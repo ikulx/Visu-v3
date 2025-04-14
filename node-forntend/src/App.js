@@ -245,7 +245,7 @@ function App() {
              closable={false}
              maskClosable={false}
              centered
-             bodyStyle={{
+             boddy={{
                  backgroundColor: 'rgba(204, 0, 0, 0.9)',
                  color: '#fff',
                  display: 'flex',

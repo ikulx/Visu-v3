@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Modal, Tabs, Form, Input, Button, Select, Switch, Tree, message, Divider, Table, Popconfirm } from 'antd';
-import { PlusOutlined, DeleteOutlined, CopyOutlined, SaveOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Modal, Tabs, Form, Input, Button, Select, Switch, Tree, message, Divider, Table, Popconfirm, Space, Spin } from 'antd'; // Space, Spin hinzugefügt
+import { PlusOutlined, DeleteOutlined, CopyOutlined, SaveOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons'; // EditOutlined, LoadingOutlined hinzugefügt
 import socket from '../socket';
 import { useTranslation } from 'react-i18next';
+import { produce } from 'immer'; // Immer importieren für einfachere State Updates
+// RULES: Import the new component
+import RulesConfigTab from './RulesConfigTab'; // Passe den Pfad ggf. an
 
 const { Option } = Select;
 const { TabPane } = Tabs;
@@ -17,534 +20,299 @@ const MenuConfigModal = ({ visible, onClose }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [menuData, setMenuData] = useState({ menuItems: [] });
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false); // Hinzugefügt
   const [selectedNode, setSelectedNode] = useState(null);
+  const [selectedNodeKey, setSelectedNodeKey] = useState(null); // Hinzugefügt für Tree-Selektion
   const [loggingSettings, setLoggingSettings] = useState([]);
-  const [tempLoggingSettings, setTempLoggingSettings] = useState([]); // Temporärer Zustand für Änderungen
-  const [pages, setPages] = useState([]); // Zustand für die definierten Seiten
-  const [tempPages, setTempPages] = useState([]); // Temporärer Zustand für Seiten
-  const [newPage, setNewPage] = useState(''); // Eingabe für neue Seite
-  const [newTopic, setNewTopic] = useState(''); // Eingabe für neues Topic
-  const [selectedPageForTopic, setSelectedPageForTopic] = useState(null); // Ausgewählte Seite für neues Topic
+  const [isLoadingLogging, setIsLoadingLogging] = useState(false); // Hinzugefügt
+  const [tempLoggingSettings, setTempLoggingSettings] = useState([]);
+  const [pages, setPages] = useState([]);
+  const [tempPages, setTempPages] = useState([]);
+  const [newPage, setNewPage] = useState('');
+  const [newTopic, setNewTopic] = useState('');
+  const [selectedPageForTopic, setSelectedPageForTopic] = useState(null);
+  // RULES: State für Regeln hinzugefügt
+  const [visibilityRules, setVisibilityRules] = useState([]);
+  const [isLoadingRules, setIsLoadingRules] = useState(false); // Hinzugefügt
+
+  // Funktion zum Finden eines Knotens anhand seiner Daten (Referenz oder ID)
+  const findNodeByReference = (items, nodeToFind) => {
+        if (!Array.isArray(items) || !nodeToFind) return null;
+        for (const item of items) {
+            if (!item) continue;
+            // ID bevorzugen, da Referenz sich ändern kann
+            if ((nodeToFind.id != null && item.id === nodeToFind.id) || item === nodeToFind) {
+                return item;
+            }
+            if (item.sub) {
+                const found = findNodeByReference(item.sub, nodeToFind);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+
+  // Funktion zum Generieren eines stabilen Keys für Tree-Nodes
+  const generateNodeKey = (item, index, parentKey = 'root') => {
+    if (!item) return `${parentKey}-invalid-${index}`;
+    const labelPart = typeof item.label === 'object' && item.label !== null
+        ? (item.label.value || `item-${index}`)
+        : (item.label || `item-${index}`);
+    // ID bevorzugen, sonst Kombination
+    return item.id != null ? `item-${item.id}` : `${parentKey}-${item.link || labelPart}-${index}`;
+  };
 
   // Daten anfordern, wenn das Modal geöffnet wird
   useEffect(() => {
     if (visible) {
+      console.log("MenuConfigModal visible: Requesting data...");
+      setIsLoadingMenu(true); // Laden anzeigen
+      setIsLoadingLogging(true); // Laden anzeigen
+      setIsLoadingRules(true); // RULES: Laden anzeigen
       socket.emit('request-menu-config');
       socket.emit('request-logging-settings');
+      socket.emit('request-visibility-rules'); // RULES: Regeln anfordern
+    } else {
+        // Reset states when modal is closed (optional, depends on desired behavior)
+        setIsLoadingMenu(false);
+        setIsLoadingLogging(false);
+        setIsLoadingRules(false);
+        setSelectedNode(null);
+        setSelectedNodeKey(null);
+        form.resetFields();
+        // Temporäre Änderungen ggf. verwerfen oder beibehalten? Hier verwerfen:
+        setTempLoggingSettings(loggingSettings);
+        setTempPages(pages);
     }
-  }, [visible]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]); // Nur von 'visible' abhängig
+
+  // Formular aktualisieren (Callback)
+  const updateForm = useCallback((node) => {
+        if (!node) { form.resetFields(); return; }
+        const labelField = typeof node.label === 'object' && node.label !== null ? node.label : { value: node.label, source_type: 'static', source_key: '' };
+        const properties = node.properties || {};
+        const actions = node.actions || {};
+
+        form.setFieldsValue({
+          label: labelField,
+          link: node.link || '',
+          svg: node.svg || '',
+          enable: node.enable === true || node.enable === 'true' || node.enable === 1,
+          qhmiVariable: node.qhmiVariable || '',
+          svgConditions: node.svgConditions || [],
+          properties: Object.entries(properties).map(([key, propData]) => {
+            const isObject = typeof propData === 'object' && propData !== null;
+            return { key, value: isObject ? propData.value : propData, source_type: isObject ? propData.source_type || 'static' : 'static', source_key: isObject ? propData.source_key || '' : '' };
+          }),
+          actions: Object.entries(actions).map(([actionName, qhmiNames]) => ({ actionName, qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames].filter(Boolean) })),
+        });
+      }, [form]);
+
+  // Helper to find the key of a node within the current menuData structure
+  const findKeyInTree = useCallback((items, nodeToFind, parentKey = 'root') => {
+        if (!Array.isArray(items) || !nodeToFind) return null;
+        for (let index = 0; index < items.length; index++) {
+            const item = items[index];
+            if (!item) continue;
+            const key = generateNodeKey(item, index, parentKey);
+            // ID bevorzugen für Vergleich
+            if ((nodeToFind.id != null && item.id === nodeToFind.id) || item === nodeToFind) {
+                return key;
+            }
+            if (item.sub) {
+                const foundKey = findKeyInTree(item.sub, nodeToFind, key);
+                if (foundKey) return foundKey;
+            }
+        }
+        return null;
+    }, [generateNodeKey]); // Hängt von generateNodeKey ab
 
   // Socket.IO-Listener für Updates
   useEffect(() => {
     const onMenuConfigUpdate = (data) => {
-      console.log('Menu config received:', JSON.stringify(data, null, 2));
-      setMenuData(data);
+      console.log('Menu config update received:', data ? 'Data received' : 'No data');
+      const newMenuData = data && Array.isArray(data.menuItems) ? data : { menuItems: [] };
+      setMenuData(newMenuData);
+      setIsLoadingMenu(false);
       if (selectedNode) {
-        const updatedNode = findNodeByLinkAndLabel(data.menuItems, selectedNode.link, selectedNode.label);
-        if (updatedNode) {
-          setSelectedNode(updatedNode);
-          updateForm(updatedNode);
-        }
-      }
+           const stillSelectedNode = findNodeByReference(newMenuData.menuItems, selectedNode);
+           if (stillSelectedNode) {
+              setSelectedNode(stillSelectedNode); updateForm(stillSelectedNode);
+              const newKey = findKeyInTree(newMenuData.menuItems, stillSelectedNode);
+              setSelectedNodeKey(newKey);
+           } else { setSelectedNode(null); setSelectedNodeKey(null); form.resetFields(); }
+       }
     };
-
     const onMenuConfigSuccess = (response) => {
-      console.log('Menu config successful:', response.message);
-      setMenuData(response.menu);
-      message.success(t('menuUpdated'));
+      console.log('Menu config save successful:', response.message);
+       if (response.menu && Array.isArray(response.menu.menuItems)) {
+          setMenuData(response.menu); setIsLoadingMenu(false);
+           if (selectedNode) {
+              const stillSelectedNode = findNodeByReference(response.menu.menuItems, selectedNode);
+               if (stillSelectedNode) { setSelectedNode(stillSelectedNode); updateForm(stillSelectedNode); const newKey = findKeyInTree(response.menu.menuItems, stillSelectedNode); setSelectedNodeKey(newKey);
+               } else { setSelectedNode(null); setSelectedNodeKey(null); form.resetFields(); }
+           }
+       } else { setIsLoadingMenu(false); }
+      message.success(response.message || t('menuUpdated'));
     };
-
-    const onMenuConfigError = (error) => {
-      console.error('Menu config error:', error.message);
-      message.error(t('menuUpdateFailed', { message: error.message }));
-    };
-
+    const onMenuConfigError = (error) => { console.error('Menu config save error:', error.message); setIsLoadingMenu(false); message.error(t('menuUpdateFailed', { message: error.message })); };
     const onLoggingSettingsUpdate = (data) => {
-      setLoggingSettings(data);
-      setTempLoggingSettings(data);
-      // Extrahiere die einzigartigen Seiten aus den Logging-Einstellungen
-      const uniquePages = [...new Set(
-        data
-          .filter(setting => setting.page)
-          .flatMap(setting => setting.page.split(',').map(p => p.trim()))
-      )];
-      setPages(uniquePages);
-      setTempPages(uniquePages);
+      console.log('Logging settings received:', data ? `${data.length} settings` : 'No data');
+      const validData = Array.isArray(data) ? data : [];
+      setLoggingSettings(validData); setTempLoggingSettings(validData);
+      const uniquePages = [...new Set(validData.filter(s => s.page).flatMap(s => s.page.split(',').map(p => p.trim())))].sort();
+      setPages(uniquePages); setTempPages(uniquePages); setIsLoadingLogging(false);
     };
 
+    // RULES: Listener für Regeln hinzugefügt
+    const onVisibilityRulesUpdate = (data) => {
+        console.log('Visibility rules received:', data ? `${data.length} rules` : 'No data');
+        setVisibilityRules(Array.isArray(data) ? data : []);
+        setIsLoadingRules(false);
+    };
+    const onVisibilityRulesSuccess = (response) => {
+         message.success(response.message || t('rulesSaved'));
+         setIsLoadingRules(false);
+         // Die neuen Regeln kommen über 'visibility-rules-update'
+    };
+    const onVisibilityRulesError = (error) => {
+         message.error(error.message || t('rulesSaveFailed'));
+         setIsLoadingRules(false);
+    };
+
+    // Listener registrieren
     socket.on('menu-config-update', onMenuConfigUpdate);
     socket.on('menu-config-success', onMenuConfigSuccess);
     socket.on('menu-config-error', onMenuConfigError);
     socket.on('logging-settings-update', onLoggingSettingsUpdate);
+    socket.on('visibility-rules-update', onVisibilityRulesUpdate);
+    socket.on('visibility-rules-success', onVisibilityRulesSuccess);
+    socket.on('visibility-rules-error', onVisibilityRulesError);
 
     return () => {
+      // Listener deregistrieren
       socket.off('menu-config-update', onMenuConfigUpdate);
       socket.off('menu-config-success', onMenuConfigSuccess);
       socket.off('menu-config-error', onMenuConfigError);
       socket.off('logging-settings-update', onLoggingSettingsUpdate);
+      socket.off('visibility-rules-update', onVisibilityRulesUpdate);
+      socket.off('visibility-rules-success', onVisibilityRulesSuccess);
+      socket.off('visibility-rules-error', onVisibilityRulesError);
     };
-  }, [visible, t, selectedNode]);
+  }, [t, form, updateForm, selectedNode, findKeyInTree]); // Abhängigkeiten aktualisiert
 
-  // Hilfsfunktion zum Finden eines Knotens
-  const findNodeByLinkAndLabel = (items, link, label) => {
-    for (const item of items) {
-      const itemLabel = typeof item.label === 'object' ? item.label.value : item.label;
-      if (item.link === link && itemLabel === label) {
-        return item;
-      }
-      if (item.sub && item.sub.length > 0) {
-        const found = findNodeByLinkAndLabel(item.sub, link, label);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
+  // --- Menu Item Tree and Form Logic ---
+  const generateTreeData = useCallback((items, parentKey = 'root') => {
+     if (!Array.isArray(items)) return [];
+     return items.map((item, index) => {
+         if (!item) return null;
+         const key = generateNodeKey(item, index, parentKey);
+         const labelText = typeof item.label === 'object' && item.label !== null ? (item.label.value || `Item ${index + 1}`) : (item.label || `Item ${index + 1}`);
+         return { title: `${labelText} (${item.link || '-'})`, key: key, children: generateTreeData(item.sub, key), itemData: item, };
+     }).filter(Boolean);
+  }, [generateNodeKey]);
 
-  // Hilfsfunktion zum Aktualisieren des Formulars
-  const updateForm = (node) => {
-    const labelField =
-      typeof node.label === 'object'
-        ? node.label
-        : { value: node.label, source_type: 'static', source_key: '' };
-    form.setFieldsValue({
-      label: labelField,
-      link: node.link,
-      svg: node.svg,
-      enable: node.enable === 'true' || node.enable === true,
-      qhmiVariable: node.qhmiVariable,
-      svgConditions: node.svgConditions || [],
-      properties: Object.entries(node.properties || {}).map(([key, value]) => ({
-        key,
-        value: typeof value === 'object' ? value.value : value,
-        source_type: typeof value === 'object' ? value.source_type : 'static',
-        source_key: typeof value === 'object' ? value.source_key || '' : '',
-      })),
-      actions: Object.entries(node.actions || {}).map(([actionName, qhmiNames]) => ({
-        actionName,
-        qhmiNames: Array.isArray(qhmiNames) ? qhmiNames : [qhmiNames],
-      })),
-    });
-  };
+  const treeData = useMemo(() => generateTreeData(menuData.menuItems), [menuData.menuItems, generateTreeData]);
 
-  const generateTreeData = (items) => {
-    return items.map(item => {
-      const labelText = typeof item.label === 'object' ? item.label.value : item.label;
-      return {
-        title: `${labelText} (${item.link || '-'})`,
-        key: item.link || labelText,
-        children: item.sub && item.sub.length > 0 ? generateTreeData(item.sub) : [],
-        itemData: item,
-      };
-    });
-  };
-
-  const treeData = generateTreeData(menuData.menuItems);
-
-  const onSelect = (selectedKeys, info) => {
-    if (selectedKeys.length > 0) {
+  const onSelect = useCallback((selectedKeys, info) => {
+    if (info.node && info.node.itemData) {
       const node = info.node.itemData;
       setSelectedNode(node);
+      setSelectedNodeKey(info.node.key); // Key speichern
       updateForm(node);
     } else {
       setSelectedNode(null);
+      setSelectedNodeKey(null); // Key zurücksetzen
       form.resetFields();
     }
-  };
+  }, [form, updateForm]);
 
-  const onFinish = (values) => {
-    if (!selectedNode) {
-      message.error(t('selectMenuItem'));
-      return;
-    }
-
-    const updatedNode = {
-      ...selectedNode,
-      label: values.label,
-      link: values.link,
-      svg: values.svg,
-      enable: values.enable,
-      qhmiVariable: values.qhmiVariable,
-      svgConditions: values.svgConditions,
-      properties: values.properties.reduce((acc, prop) => {
-        if (prop.source_type === 'static') {
-          acc[prop.key] = { value: prop.value, source_type: prop.source_type, source_key: null };
-        } else {
-          acc[prop.key] = { value: null, source_type: prop.source_type, source_key: prop.source_key };
+  // --- Form Handlers ---
+  const onFinishMenuItem = useCallback(async () => {
+    if (!selectedNode) { message.error(t('selectMenuItem')); return; }
+    try {
+        const values = await form.validateFields();
+        setIsLoadingMenu(true);
+        const updatedMenu = produce(menuData, draft => {
+            const updateNode = (items) => {
+                if (!Array.isArray(items)) return false;
+                for (let i = 0; i < items.length; i++) { if (!items[i]) continue; if ((selectedNode.id != null && items[i].id === selectedNode.id) || items[i] === selectedNode) { items[i] = { ...items[i], label: values.label || { value: 'Unnamed', source_type: 'static', source_key: null }, link: values.link || null, svg: values.svg || null, enable: values.enable === true, qhmiVariable: values.qhmiVariable || null, svgConditions: values.svgConditions || [], properties: (values.properties || []).reduce((acc, prop) => { if (prop && prop.key) { if (prop.source_type === 'static') { acc[prop.key] = { value: prop.value, source_type: prop.source_type, source_key: null }; } else { acc[prop.key] = { value: null, source_type: prop.source_type, source_key: prop.source_key }; } } return acc; }, {}), actions: (values.actions || []).reduce((acc, action) => { if (action && action.actionName) { acc[action.actionName] = action.qhmiNames || []; } return acc; }, {}), }; return true; } if (items[i].sub && updateNode(items[i].sub)) return true; } return false; };
+            if (!updateNode(draft.menuItems)) { console.warn("Selected node not found for update!"); setIsLoadingMenu(false); } });
+        // Nur senden, wenn der Knoten gefunden wurde
+        if (findNodeByReference(updatedMenu.menuItems, selectedNode)) {
+             socket.emit('update-menu-config', updatedMenu);
         }
-        return acc;
-      }, {}),
-      actions: values.actions.reduce((acc, action) => {
-        acc[action.actionName] = action.qhmiNames;
-        return acc;
-      }, {}),
-    };
+      } catch (info) { console.log('Menu Item Validate Failed:', info); message.error(t('validationFailed')); setIsLoadingMenu(false); }
+  }, [selectedNode, menuData, t, form]);
 
-    const updateMenu = (items) => {
-      return items.map(item => {
-        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
-        const selectedLabel =
-          typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
-        if (item.link === selectedNode.link && currentLabel === selectedLabel) {
-          return { ...item, ...updatedNode };
-        } else if (item.sub && item.sub.length > 0) {
-          return { ...item, sub: updateMenu(item.sub) };
-        }
-        return item;
-      });
-    };
-
-    const updatedMenu = { menuItems: updateMenu(menuData.menuItems) };
-    setMenuData(updatedMenu);
+  const addNewItem = useCallback(() => {
+    setIsLoadingMenu(true); const newItem = { label: { value: 'New Item', source_type: 'static', source_key: '' }, link: `/new-item-${Date.now()}`, svg: 'default', enable: true, qhmiVariable: null, svgConditions: [], properties: {}, actions: {}, sub: [], };
+    const updatedMenu = produce(menuData, draft => { if (!draft.menuItems) draft.menuItems = []; draft.menuItems.push(newItem); });
     socket.emit('update-menu-config', updatedMenu);
-  };
+  }, [menuData]);
 
-  const addNewItem = () => {
-    const newItem = {
-      label: { value: 'New Item', source_type: 'static', source_key: '' },
-      link: '/new-item',
-      svg: 'default',
-      enable: true,
-      qhmiVariable: null,
-      svgConditions: [],
-      properties: {},
-      actions: {},
-      sub: [],
-    };
-    const updatedMenu = { menuItems: [...menuData.menuItems, newItem] };
-    setMenuData(updatedMenu);
+  const addSubMenu = useCallback(() => {
+    if (!selectedNode) { message.error(t('selectMenuItem')); return; }
+    setIsLoadingMenu(true); const newSubMenu = { label: { value: 'New Submenu', source_type: 'static', source_key: '' }, link: `/new-submenu-${Date.now()}`, svg: 'default', enable: true, qhmiVariable: null, svgConditions: [], properties: {}, actions: {}, sub: [], };
+     const updatedMenu = produce(menuData, draft => { const addSubRecursive = (items) => { if (!Array.isArray(items)) return false; for (let i = 0; i < items.length; i++) { if (!items[i]) continue; if ((selectedNode.id != null && items[i].id === selectedNode.id) || items[i] === selectedNode) { if (!items[i].sub) items[i].sub = []; items[i].sub.push(newSubMenu); return true; } if (items[i].sub && addSubRecursive(items[i].sub)) return true; } return false; }; addSubRecursive(draft.menuItems); });
     socket.emit('update-menu-config', updatedMenu);
-  };
+  }, [selectedNode, menuData, t]);
 
-  const addSubMenu = () => {
-    if (!selectedNode) {
-      message.error(t('selectMenuItem'));
-      return;
-    }
-    const newSubMenu = {
-      label: { value: 'New Submenu', source_type: 'static', source_key: '' },
-      link: '/new-submenu',
-      svg: 'default',
-      enable: true,
-      qhmiVariable: null,
-      svgConditions: [],
-      properties: {},
-      actions: {},
-      sub: [],
-    };
-
-    const addSubMenuToNode = (items) => {
-      return items.map(item => {
-        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
-        const selectedLabel =
-          typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
-        if (item.link === selectedNode.link && currentLabel === selectedLabel) {
-          const updatedSub = item.sub ? [...item.sub, newSubMenu] : [newSubMenu];
-          return { ...item, sub: updatedSub };
-        } else if (item.sub && item.sub.length > 0) {
-          return { ...item, sub: addSubMenuToNode(item.sub) };
-        }
-        return item;
-      });
-    };
-
-    const updatedMenu = { menuItems: addSubMenuToNode(menuData.menuItems) };
-    setMenuData(updatedMenu);
+  const duplicateItem = useCallback(() => {
+    if (!selectedNode) { message.error(t('selectMenuItem')); return; }
+    setIsLoadingMenu(true); const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
+    const duplicateMenuItemRecursive = (item) => { const newItem = deepCopy(item); delete newItem.id; const labelBase = typeof newItem.label === 'object' ? newItem.label.value : newItem.label; const newLabelValue = `${labelBase || 'Item'} Copy`; if (typeof newItem.label === 'object') newItem.label.value = newLabelValue; else newItem.label = newLabelValue; newItem.link = `${item.link || 'item'}-copy-${Date.now()}`; if (Array.isArray(newItem.sub)) newItem.sub = newItem.sub.map(duplicateMenuItemRecursive); else newItem.sub = []; return newItem; };
+     const updatedMenu = produce(menuData, draft => { const duplicateInList = (items) => { if (!Array.isArray(items)) return false; let inserted = false; for (let i = items.length - 1; i >= 0; i--) { if (!items[i]) continue; if ((selectedNode.id != null && items[i].id === selectedNode.id) || items[i] === selectedNode) { const duplicate = duplicateMenuItemRecursive(items[i]); items.splice(i + 1, 0, duplicate); inserted = true; break; } if (!inserted && items[i]?.sub && duplicateInList(items[i].sub)) { inserted = true; break; } } return inserted; }; duplicateInList(draft.menuItems); });
     socket.emit('update-menu-config', updatedMenu);
-  };
+  }, [selectedNode, menuData, t]);
 
-  const duplicateItem = () => {
-    if (!selectedNode) {
-      message.error(t('selectMenuItem'));
-      return;
-    }
-
-    const duplicateMenuItem = (item) => {
-      const newItem = JSON.parse(JSON.stringify(item));
-      if (typeof newItem.label === 'object') {
-        newItem.label.value = newItem.label.value + ' Copy';
-      } else {
-        newItem.label = newItem.label + ' Copy';
-      }
-      newItem.link = newItem.link + '-copy';
-      if (newItem.sub && newItem.sub.length > 0) {
-        newItem.sub = newItem.sub.map(duplicateMenuItem);
-      }
-      return newItem;
-    };
-
-    const duplicateInList = (items) => {
-      return items.flatMap(item => {
-        let arr = [item];
-        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
-        const selectedLabel =
-          typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
-        if (item.link === selectedNode.link && currentLabel === selectedLabel) {
-          arr.push(duplicateMenuItem(item));
-        }
-        if (item.sub && item.sub.length > 0) {
-          item.sub = duplicateInList(item.sub);
-        }
-        return arr;
-      });
-    };
-
-    const updatedMenuItems = duplicateInList(menuData.menuItems);
-    const updatedMenu = { menuItems: updatedMenuItems };
-    setMenuData(updatedMenu);
+  const deleteItem = useCallback(() => {
+    if (!selectedNode) { message.error(t('selectMenuItem')); return; }
+    setIsLoadingMenu(true); const currentSelectedNodeId = selectedNode?.id; const currentSelectedNodeRef = selectedNode;
+    const updatedMenu = produce(menuData, draft => { const deleteRecursive = (items) => { if (!Array.isArray(items)) return false; for (let i = 0; i < items.length; i++) { if (!items[i]) continue; const nodeMatches = (currentSelectedNodeId != null && items[i].id === currentSelectedNodeId) || items[i] === currentSelectedNodeRef; if (nodeMatches) { items.splice(i, 1); return true; } if (items[i].sub && deleteRecursive(items[i].sub)) return true; } return false; }; deleteRecursive(draft.menuItems); });
+    setSelectedNode(null); setSelectedNodeKey(null); form.resetFields();
     socket.emit('update-menu-config', updatedMenu);
-    message.success(t('menuDuplicated'));
-  };
+  }, [selectedNode, menuData, t, form]);
 
-  const deleteItem = () => {
-    if (!selectedNode) {
-      message.error(t('selectMenuItem'));
-      return;
-    }
 
-    const deleteFromMenu = (items) => {
-      return items.filter(item => {
-        const currentLabel = typeof item.label === 'object' ? item.label.value : item.label;
-        const selectedLabel =
-          typeof selectedNode.label === 'object' ? selectedNode.label.value : selectedNode.label;
-        if (item.link === selectedNode.link && currentLabel === selectedLabel) {
-          return false;
-        } else if (item.sub && item.sub.length > 0) {
-          item.sub = deleteFromMenu(item.sub);
-          return true;
-        }
-        return true;
-      });
-    };
+  // --- Logging Settings Handlers ---
+   const handleAddPage = useCallback(() => { if (newPage.trim() && !tempPages.includes(newPage.trim())) { const updatedPages = [...tempPages, newPage.trim()].sort(); setTempPages(updatedPages); setNewPage(''); } else if (tempPages.includes(newPage.trim())) { message.error(t('pageAlreadyExists')); } }, [newPage, tempPages, t]);
+   const handleDeletePage = useCallback((pageToDelete) => { const updatedPages = tempPages.filter(p => p !== pageToDelete); setTempPages(updatedPages); const updatedSettings = tempLoggingSettings.map(setting => { if (setting.page) { const pages = setting.page.split(',').map(p => p.trim()); const filteredPages = pages.filter(p => p !== pageToDelete); return { ...setting, page: filteredPages.join(',') }; } return setting; }); setTempLoggingSettings(updatedSettings); }, [tempPages, tempLoggingSettings]);
+   const handleAddLoggingSetting = useCallback(() => { if (newTopic.trim() && selectedPageForTopic) { const topicToAdd = newTopic.trim(); setTempLoggingSettings(currentSettings => { const existingSettingIndex = currentSettings.findIndex(setting => setting.topic === topicToAdd); if (existingSettingIndex > -1) { const setting = currentSettings[existingSettingIndex]; const currentPages = setting.page ? setting.page.split(',').map(p => p.trim()) : []; if (!currentPages.includes(selectedPageForTopic)) { const updatedPages = [...currentPages, selectedPageForTopic].sort().join(','); const newSettings = [...currentSettings]; newSettings[existingSettingIndex] = {...setting, page: updatedPages}; return newSettings; } else { message.warning(t('topicAlreadyOnPage')); return currentSettings; } } else { return [ ...currentSettings, { topic: topicToAdd, enabled: true, color: predefinedColors[currentSettings.length % predefinedColors.length], page: selectedPageForTopic, description: '', unit: '', } ]; } }); setNewTopic(''); setSelectedPageForTopic(null); } else { message.error(t('selectPageAndTopic')); } }, [newTopic, selectedPageForTopic, t]);
+   const handleDeleteLoggingSetting = useCallback((topic) => { setTempLoggingSettings(currentSettings => currentSettings.filter(setting => setting.topic !== topic)); }, []);
+   const handleToggleLoggingSetting = useCallback((topic) => { setTempLoggingSettings(currentSettings => currentSettings.map(setting => setting.topic === topic ? { ...setting, enabled: !setting.enabled } : setting)); }, []);
+   const handleColorChange = useCallback((topic, color) => { setTempLoggingSettings(currentSettings => currentSettings.map(setting => setting.topic === topic ? { ...setting, color } : setting)); }, []);
+   const handlePageChange = useCallback((topic, pagesArray) => { setTempLoggingSettings(currentSettings => currentSettings.map(setting => setting.topic === topic ? { ...setting, page: Array.isArray(pagesArray) ? pagesArray.sort().join(',') : '' } : setting)); }, []);
+   const handleDescriptionChange = useCallback((topic, description) => { setTempLoggingSettings(currentSettings => currentSettings.map(setting => setting.topic === topic ? { ...setting, description } : setting)); }, []);
+   const handleUnitChange = useCallback((topic, unit) => { setTempLoggingSettings(currentSettings => currentSettings.map(setting => setting.topic === topic ? { ...setting, unit } : setting)); }, []);
+   const handleSaveLoggingSettings = useCallback(() => { setIsLoadingLogging(true); socket.emit('update-pages-and-settings', { pages: tempPages, settings: tempLoggingSettings, }); }, [tempPages, tempLoggingSettings]);
 
-    const updatedMenu = { menuItems: deleteFromMenu(menuData.menuItems) };
-    setMenuData(updatedMenu);
-    socket.emit('update-menu-config', updatedMenu);
-    setSelectedNode(null);
-    form.resetFields();
-  };
+   // Memoized tree data generation for logging settings
+   const generateLoggingTreeData = useCallback((settings, pages) => {
+       const pageMap = {}; pages.forEach(page => { pageMap[page] = new Set(); });
+       settings.forEach(setting => { const assignedPages = setting.page ? setting.page.split(',').map(p => p.trim()) : []; assignedPages.forEach(page => { if (pageMap[page]) { pageMap[page].add(setting); } }); });
+       return pages.map(page => ({
+         title: ( <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}> <span style={{ fontWeight: 'bold' }}>{page}</span> <Popconfirm title={t('confirmDeletePage')} onConfirm={() => handleDeletePage(page)} okText={t('yes')} cancelText={t('no')}> <Button size="small" danger icon={<DeleteOutlined />} /> </Popconfirm> </div> ),
+         key: `page-${page}`,
+         children: Array.from(pageMap[page] || []).sort((a, b) => a.topic.localeCompare(b.topic)).map(setting => ({
+           title: ( <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '2px 0' }}> <span style={{ minWidth: '150px', flexShrink: 0 }}>{setting.topic}</span> <Switch checked={setting.enabled !== false} onChange={() => handleToggleLoggingSetting(setting.topic)} checkedChildren={t('Enabled')} unCheckedChildren={t('Disabled')} size="small"/> <Select size="small" value={setting.color || predefinedColors[0]} onChange={(value) => handleColorChange(setting.topic, value)} style={{ width: 100 }}>{predefinedColors.map((colorOption) => (<Option key={colorOption} value={colorOption} style={{ padding: '4px 8px' }}><div style={{ display: 'flex', alignItems: 'center' }}><div style={{ width: 14, height: 14, backgroundColor: colorOption, marginRight: 5, border: '1px solid #555', borderRadius: '2px' }}/></div></Option>))}</Select> <Select size="small" mode="multiple" allowClear placeholder={t('Select Pages')} value={setting.page ? setting.page.split(',').map(p => p.trim()) : []} onChange={(value) => handlePageChange(setting.topic, value)} style={{ minWidth: 150, flexGrow: 1 }}>{tempPages.map(p => (<Option key={p} value={p}>{p}</Option>))}</Select> <Input size="small" value={setting.description || ''} onChange={(e) => handleDescriptionChange(setting.topic, e.target.value)} placeholder={t('Description')} style={{ width: 150 }}/> <Input size="small" value={setting.unit || ''} onChange={(e) => handleUnitChange(setting.topic, e.target.value)} placeholder={t('Unit')} style={{ width: 60 }}/> <Popconfirm title={t('confirmDeleteTopic')} onConfirm={() => handleDeleteLoggingSetting(setting.topic)} okText={t('yes')} cancelText={t('no')}> <Button size="small" danger icon={<DeleteOutlined />} /> </Popconfirm> </div> ),
+           key: `topic-${setting.topic}-${page}`, isLeaf: true,
+         })),
+       }));
+     }, [t, tempPages, handleDeletePage, handleToggleLoggingSetting, handleColorChange, handlePageChange, handleDescriptionChange, handleUnitChange, handleDeleteLoggingSetting]);
+   const loggingTreeData = useMemo(() => generateLoggingTreeData(tempLoggingSettings, tempPages), [generateLoggingTreeData, tempLoggingSettings, tempPages]);
+   // --- Ende Logging Handlers ---
 
-  // Seitenverwaltung
-  const handleAddPage = () => {
-    if (newPage.trim() && !tempPages.includes(newPage.trim())) {
-      setTempPages([...tempPages, newPage.trim()]);
-      setNewPage('');
-    } else if (tempPages.includes(newPage.trim())) {
-      message.error(t('pageAlreadyExists'));
-    }
-  };
 
-  const handleDeletePage = (page) => {
-    // Entferne die Seite aus der Liste
-    setTempPages(tempPages.filter(p => p !== page));
-    // Entferne die Seite aus allen Topics
-    const updatedSettings = tempLoggingSettings.map(setting => {
-      if (setting.page) {
-        const pages = setting.page.split(',').map(p => p.trim());
-        const updatedPages = pages.filter(p => p !== page);
-        return { ...setting, page: updatedPages.join(',') };
-      }
-      return setting;
-    });
-    setTempLoggingSettings(updatedSettings);
-  };
+  // RULES: Handler zum Speichern der Regeln (Implementierung)
+  const handleSaveVisibilityRules = useCallback((updatedRules) => {
+      console.log("[MenuConfigModal] Saving visibility rules:", updatedRules);
+      setIsLoadingRules(true); // Laden anzeigen
+      socket.emit('update-visibility-rules', updatedRules);
+      // Erfolg/Fehler wird durch Listener oben behandelt
+  }, []); // Keine Abhängigkeiten nötig
 
-  // Logging-Einstellungen Funktionen
-  const handleAddLoggingSetting = () => {
-    if (newTopic.trim() && selectedPageForTopic) {
-      const existingSetting = tempLoggingSettings.find(setting => setting.topic === newTopic);
-      if (existingSetting) {
-        // Topic existiert bereits, füge die neue Seite hinzu
-        const currentPages = existingSetting.page ? existingSetting.page.split(',').map(p => p.trim()) : [];
-        if (!currentPages.includes(selectedPageForTopic)) {
-          currentPages.push(selectedPageForTopic);
-          const updatedSettings = tempLoggingSettings.map(setting =>
-            setting.topic === newTopic ? { ...setting, page: currentPages.join(',') } : setting
-          );
-          setTempLoggingSettings(updatedSettings);
-        } else {
-          message.warning(t('topicAlreadyOnPage'));
-        }
-      } else {
-        // Neues Topic
-        const newSetting = {
-          topic: newTopic,
-          enabled: true,
-          color: predefinedColors[0],
-          page: selectedPageForTopic,
-          description: '',
-          unit: '°C',
-        };
-        setTempLoggingSettings([...tempLoggingSettings, newSetting]);
-      }
-      setNewTopic('');
-      setSelectedPageForTopic(null);
-    } else {
-      message.error(t('selectPageAndTopic'));
-    }
-  };
-
-  const handleDeleteLoggingSetting = (topic) => {
-    setTempLoggingSettings(tempLoggingSettings.filter(setting => setting.topic !== topic));
-  };
-
-  const handleToggleLoggingSetting = (topic, enabled) => {
-    const updatedSettings = tempLoggingSettings.map(setting =>
-      setting.topic === topic ? { ...setting, enabled: !enabled } : setting
-    );
-    setTempLoggingSettings(updatedSettings);
-  };
-
-  const handleColorChange = (topic, color) => {
-    const updatedSettings = tempLoggingSettings.map(setting =>
-      setting.topic === topic ? { ...setting, color } : setting
-    );
-    setTempLoggingSettings(updatedSettings);
-  };
-
-  const handlePageChange = (topic, page) => {
-    const updatedSettings = tempLoggingSettings.map(setting =>
-      setting.topic === topic ? { ...setting, page } : setting
-    );
-    setTempLoggingSettings(updatedSettings);
-  };
-
-  const handleDescriptionChange = (topic, description) => {
-    const updatedSettings = tempLoggingSettings.map(setting =>
-      setting.topic === topic ? { ...setting, description } : setting
-    );
-    setTempLoggingSettings(updatedSettings);
-  };
-
-  const handleUnitChange = (topic, unit) => {
-    const updatedSettings = tempLoggingSettings.map(setting =>
-      setting.topic === topic ? { ...setting, unit } : setting
-    );
-    setTempLoggingSettings(updatedSettings);
-  };
-
-  const handleSaveLoggingSettings = () => {
-    // Sende die Seiten und Logging-Einstellungen an den Server
-    socket.emit('update-pages-and-settings', {
-      pages: tempPages,
-      settings: tempLoggingSettings,
-    });
-    message.success(t('loggingSettingsSaved'));
-  };
-
-  // Generiere die Baumstruktur für die Logging-Einstellungen (ohne Sortierung)
-  const generateLoggingTreeData = (settings) => {
-    // Erstelle eine Map, um sicherzustellen, dass jedes Topic nur einmal pro Seite angezeigt wird
-    const pageTopicMap = {};
-
-    // Initialisiere die Map für jede Seite
-    tempPages.forEach(page => {
-      pageTopicMap[page] = new Set();
-    });
-
-    // Gruppiere die Einstellungen nach Seiten und stelle sicher, dass ein Topic nur einmal pro Seite angezeigt wird
-    settings.forEach(setting => {
-      const pages = setting.page ? setting.page.split(',').map(p => p.trim()) : [];
-      pages.forEach(page => {
-        if (tempPages.includes(page)) {
-          pageTopicMap[page].add(setting);
-        }
-      });
-    });
-
-    // Erstelle die Baumstruktur (ohne Sortierung der Seiten)
-    return tempPages.map(page => ({
-      title: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>{page}</span>
-          <Popconfirm
-            title={t('confirmDeletePage')}
-            onConfirm={() => handleDeletePage(page)}
-            okText={t('yes')}
-            cancelText={t('no')}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </div>
-      ),
-      key: `page-${page}`,
-      children: Array.from(pageTopicMap[page] || []).map(setting => ({
-        title: (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span>{setting.topic}</span>
-            <Button
-              size="small"
-              onClick={() => handleToggleLoggingSetting(setting.topic, setting.enabled)}
-            >
-              {setting.enabled ? t('Disable') : t('Enable')}
-            </Button>
-            <Select
-              size="small"
-              value={setting.color || predefinedColors[0]}
-              onChange={(value) => handleColorChange(setting.topic, value)}
-              style={{ width: 120 }}
-            >
-              {predefinedColors.map((colorOption) => (
-                <Option key={colorOption} value={colorOption}>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <div
-                      style={{
-                        width: 16,
-                        height: 16,
-                        backgroundColor: colorOption,
-                        marginRight: 8,
-                        border: '1px solid #434343',
-                      }}
-                    />
-                    {colorOption}
-                  </div>
-                </Option>
-              ))}
-            </Select>
-            <Select
-              size="small"
-              value={setting.page ? setting.page.split(',').map(p => p.trim()) : []}
-              onChange={(value) => handlePageChange(setting.topic, value.join(','))}
-              style={{ width: 150 }}
-              mode="multiple"
-            >
-              {tempPages.map(page => (
-                <Option key={page} value={page}>{page}</Option>
-              ))}
-            </Select>
-            <Input
-              size="small"
-              value={setting.description || ''}
-              onChange={(e) => handleDescriptionChange(setting.topic, e.target.value)}
-              placeholder="Beschreibung"
-              style={{ width: 150 }}
-            />
-            <Select
-              size="small"
-              value={setting.unit || '°C'}
-              onChange={(value) => handleUnitChange(setting.topic, value)}
-              style={{ width: 80 }}
-            >
-              <Option value="°C">°C</Option>
-              <Option value="%">%</Option>
-            </Select>
-            <Popconfirm
-              title={t('confirmDeleteTopic')}
-              onConfirm={() => handleDeleteLoggingSetting(setting.topic)}
-              okText={t('yes')}
-              cancelText={t('no')}
-            >
-              <Button size="small" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          </div>
-        ),
-        key: `topic-${setting.topic}-${page}`, // Eindeutiger Schlüssel pro Topic und Seite
-        isLeaf: true,
-      })),
-    }));
-  };
-
-  // Verwende tempLoggingSettings für die Anzeige (ohne Sortierung)
-  const loggingTreeData = generateLoggingTreeData(tempLoggingSettings);
 
   return (
     <Modal
@@ -552,326 +320,97 @@ const MenuConfigModal = ({ visible, onClose }) => {
       open={visible}
       onCancel={onClose}
       footer={null}
-      width={900}
+      width={1100}
       centered
+      destroyOnClose
       style={{ top: 20 }}
-      styles={{ body: { backgroundColor: '#141414', color: '#fff', padding: '20px' } }}
+      styles={{ body: { backgroundColor: '#141414', color: '#fff', padding: '20px', minHeight: '70vh', maxHeight: '85vh', overflowY: 'hidden' } }}
     >
-      <Tabs defaultActiveKey="1" style={{ color: '#fff' }}>
-        {/* Tab für Menü-Einstellungen */}
-        <TabPane tab={t('Menu Settings')} key="1">
-          <div style={{ display: 'flex', gap: '20px' }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ marginBottom: '10px', display: 'flex', gap: '10px' }}>
-                <Button icon={<PlusOutlined />} onClick={addNewItem}>
-                  {t('addItem')}
-                </Button>
-                <Button
-                  type="default"
-                  icon={<PlusOutlined />}
-                  onClick={addSubMenu}
-                  disabled={!selectedNode}
-                >
-                  {t('addSubMenu')}
-                </Button>
-              </div>
-              <Divider style={{ backgroundColor: '#fff' }} />
-              <Tree
-                treeData={treeData}
-                onSelect={onSelect}
-                height={400}
-                style={{ backgroundColor: '#1f1f1f', color: '#fff', padding: '10px' }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              {selectedNode ? (
-                <Form form={form} layout="vertical" onFinish={onFinish} style={{ color: '#fff' }}>
-                  <Form.Item label={t('label')}>
-                    <Form.Item
-                      name={['label', 'source_type']}
-                      noStyle
-                      rules={[{ required: true, message: t('sourceTypeRequired') }]}
-                    >
-                      <Select style={{ width: 120 }} onChange={() => form.validateFields()}>
-                        <Option value="static">{t('static')}</Option>
-                        <Option value="dynamic">{t('dynamic')}</Option>
-                        <Option value="mqtt">{t('mqtt')}</Option>
-                      </Select>
-                    </Form.Item>
-                    <Form.Item
-                      noStyle
-                      shouldUpdate={(prev, curr) =>
-                        prev.label?.source_type !== curr.label?.source_type
-                      }
-                    >
-                      {({ getFieldValue }) => {
-                        const type = getFieldValue(['label', 'source_type']) || 'static';
-                        return type === 'static' ? (
-                          <Form.Item
-                            name={['label', 'value']}
-                            noStyle
-                            rules={[{ required: true, message: t('labelValueRequired') }]}
-                          >
-                            <Input placeholder={t('labelValue')} style={{ width: 200, marginLeft: 10 }} />
-                          </Form.Item>
-                        ) : (
-                          <Form.Item
-                            name={['label', 'source_key']}
-                            noStyle
-                            rules={[{ required: true, message: t('labelSourceKeyRequired') }]}
-                          >
-                            <Input placeholder={t('labelSourceKey')} style={{ width: 200, marginLeft: 10 }} />
-                          </Form.Item>
-                        );
-                      }}
-                    </Form.Item>
-                  </Form.Item>
-                  <Form.Item name="link" label={t('link')} rules={[{ required: false }]}>
-                    <Input />
-                  </Form.Item>
-                  <Form.Item name="svg" label={t('defaultSvg')} rules={[{ required: false }]}>
-                    <Input placeholder="Standard-SVG (Fallback)" />
-                  </Form.Item>
-                  <Form.Item name="enable" label={t('enable')} valuePropName="checked">
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item name="qhmiVariable" label={t('qhmiVariable')} rules={[{ required: false }]}>
-                    <Input placeholder="Name der QhmiVariable" />
-                  </Form.Item>
-                  <Form.List name="svgConditions">
-                    {(fields, { add, remove }) => (
-                      <>
-                        {fields.map(({ key, name, ...restField }) => (
-                          <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'value']}
-                              label={t('conditionValue')}
-                              rules={[{ required: true, message: t('conditionValueRequired') }]}
-                            >
-                              <Input placeholder="Wert" />
-                            </Form.Item>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'svg']}
-                              label={t('svg')}
-                              rules={[{ required: true, message: t('svgRequired') }]}
-                            >
-                              <Input placeholder="SVG-Datei" />
-                            </Form.Item>
-                            <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                          </div>
-                        ))}
-                        <Button type="dashed" onClick={() => add()} block>
-                          {t('addSvgCondition')}
-                        </Button>
-                      </>
-                    )}
-                  </Form.List>
-                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-                  <Form.List name="properties">
-                    {(fields, { add, remove }) => (
-                      <>
-                        {fields.map(({ key, name, ...restField }) => {
-                          const sourceType =
-                            form.getFieldValue(['properties', name, 'source_type']) || 'static';
-                          return (
-                            <div key={key} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                              <Form.Item
-                                {...restField}
-                                name={[name, 'key']}
-                                rules={[{ required: true, message: t('propertyKeyRequired') }]}
-                              >
-                                <Input placeholder={t('key')} />
-                              </Form.Item>
-                              {sourceType === 'static' ? (
-                                <Form.Item
-                                  {...restField}
-                                  name={[name, 'value']}
-                                  rules={[{ required: true, message: t('propertyValueRequired') }]}
-                                >
-                                  <Input placeholder={t('value')} />
+      <Tabs defaultActiveKey="1" style={{ color: '#fff', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {/* --- Tab: Menu Settings --- */}
+        <TabPane tab={t('Menu Settings')} key="1" style={{ flexGrow: 1, overflow: 'hidden' }}>
+           {isLoadingMenu && <div style={{ textAlign: 'center', padding: 20 }}><Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} /></div>}
+           {!isLoadingMenu && (
+                <div style={{ display: 'flex', gap: '20px', height: 'calc(100% - 40px)' }}>
+                   <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
+                     <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                       <Button icon={<PlusOutlined />} onClick={addNewItem} disabled={isLoadingMenu}>{t('addItem')}</Button>
+                       <Button type="default" icon={<PlusOutlined />} onClick={addSubMenu} disabled={!selectedNode || isLoadingMenu}>{t('addSubMenu')}</Button>
+                     </div>
+                     <Divider style={{ backgroundColor: '#434343', margin: '10px 0' }} />
+                     <div style={{ flexGrow: 1, overflowY: 'auto', border: '1px solid #434343', borderRadius: '4px', background: '#1f1f1f' }}>
+                         <Tree treeData={treeData} onSelect={onSelect} selectedKeys={selectedNodeKey ? [selectedNodeKey] : []} style={{ backgroundColor: 'transparent', color: '#fff', padding: '5px' }} blockNode autoExpandParent />
+                     </div>
+                   </div>
+                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                     {selectedNode ? (
+                       <>
+                         <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '10px' }}>
+                           <Form form={form} layout="vertical" name="menuItemForm" onFinish={onFinishMenuItem} /* onFinish hier geändert */ style={{ color: '#fff' }}>
+                                <Form.Item label={t('label')}>
+                                    <Input.Group compact>
+                                    <Form.Item name={['label', 'source_type']} noStyle rules={[{ required: true }]}><Select style={{ width: '30%' }}><Option value="static">{t('static')}</Option><Option value="dynamic">{t('dynamic')}</Option><Option value="mqtt">{t('mqtt')}</Option></Select></Form.Item>
+                                    <Form.Item noStyle shouldUpdate={(p, c) => p.label?.source_type !== c.label?.source_type}>{({ getFieldValue }) => getFieldValue(['label', 'source_type']) === 'static' ? (<Form.Item name={['label', 'value']} noStyle rules={[{ required: true }]}><Input style={{ width: '70%' }} placeholder={t('labelValue')} /></Form.Item>) : (<Form.Item name={['label', 'source_key']} noStyle rules={[{ required: true }]}><Input style={{ width: '70%' }} placeholder={t('labelSourceKey')} /></Form.Item>)}</Form.Item>
+                                    </Input.Group>
                                 </Form.Item>
-                              ) : (
-                                <Form.Item
-                                  {...restField}
-                                  name={[name, 'source_key']}
-                                  rules={[{ required: true, message: t('sourceKeyRequired') }]}
-                                >
-                                  <Input placeholder={t('sourceKey')} />
-                                </Form.Item>
-                              )}
-                              <Form.Item
-                                {...restField}
-                                name={[name, 'source_type']}
-                                rules={[{ required: true, message: t('sourceTypeRequired') }]}
-                              >
-                                <Select placeholder={t('sourceType')} onChange={() => form.validateFields()}>
-                                  <Option value="static">{t('static')}</Option>
-                                  <Option value="dynamic">{t('dynamic')}</Option>
-                                  <Option value="mqtt">{t('mqtt')}</Option>
-                                </Select>
-                              </Form.Item>
-                              <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                            </div>
-                          );
-                        })}
-                        <Button type="dashed" onClick={() => add()} block>
-                          {t('addProperty')}
-                        </Button>
-                      </>
-                    )}
-                  </Form.List>
-                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-                  <Form.List name="actions">
-                    {(fields, { add, remove }) => (
-                      <>
-                        {fields.map(({ key, name, ...restField }) => (
-                          <div key={key} style={{ marginBottom: '20px', border: '1px solid #434343', padding: '10px' }}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'actionName']}
-                              label={t('actionName')}
-                              rules={[{ required: true, message: t('actionNameRequired') }]}
-                            >
-                              <Input placeholder={t('actionName')} />
-                            </Form.Item>
-                            <Form.List name={[name, 'qhmiNames']}>
-                              {(qhmiFields, { add: addQhmi, remove: removeQhmi }) => (
-                                <>
-                                  {qhmiFields.map(({ key: qhmiKey, name: qhmiName, ...qhmiRestField }) => (
-                                    <div key={qhmiKey} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                      <Form.Item
-                                        {...qhmiRestField}
-                                        name={[qhmiName]}
-                                        rules={[{ required: true, message: t('qhmiVariableNameRequired') }]}
-                                      >
-                                        <Input placeholder={t('qhmiVariableName')} />
-                                      </Form.Item>
-                                      <Button
-                                        type="primary"
-                                        danger
-                                        icon={<DeleteOutlined />}
-                                        onClick={() => removeQhmi(qhmiName)}
-                                      />
-                                    </div>
-                                  ))}
-                                  <Button type="dashed" onClick={() => addQhmi()} block style={{ marginBottom: '10px' }}>
-                                    {t('addQhmiVariable')}
-                                  </Button>
-                                </>
-                              )}
-                            </Form.List>
-                            <Button type="primary" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                                <Form.Item name="link" label={t('link')}><Input /></Form.Item>
+                                <Form.Item name="svg" label={t('defaultSvg')}><Input placeholder="Standard-SVG" /></Form.Item>
+                                <Form.Item name="enable" label={t('enable')} valuePropName="checked"><Switch /></Form.Item>
+                                <Form.Item name="qhmiVariable" label={t('qhmiVariableSvg')}><Input placeholder="Variable für SVG" /></Form.Item>
+                                <Divider orientation="left" style={{ color: '#aaa', borderColor: '#434343' }}>{t('SVG Conditions')}</Divider>
+                                <Form.List name="svgConditions">{(fields, { add, remove }) => (<>{fields.map(({ key, name, ...restField }) => (<Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline"><Form.Item {...restField} name={[name, 'value']} rules={[{ required: true }]}><Input placeholder={t('Value')} /></Form.Item><Form.Item {...restField} name={[name, 'svg']} rules={[{ required: true }]}><Input placeholder={t('SVG Name')} /></Form.Item><DeleteOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f', cursor: 'pointer' }} /></Space>))}<Form.Item><Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>{t('Add SVG Condition')}</Button></Form.Item></>)}</Form.List>
+                                <Divider orientation="left" style={{ color: '#aaa', borderColor: '#434343' }}>{t('Properties')}</Divider>
+                                <Form.List name="properties">{(fields, { add, remove }) => (<>{fields.map(({ key, name, ...restField }) => (<Space key={key} style={{ display: 'flex', marginBottom: 8, flexWrap: 'wrap' }} align="baseline"><Form.Item {...restField} name={[name, 'key']} rules={[{ required: true }]} style={{ flex: 1, minWidth: '100px' }}><Input placeholder={t('Key')} /></Form.Item><Form.Item noStyle shouldUpdate={(p, c) => p.properties?.[name]?.source_type !== c.properties?.[name]?.source_type}>{({ getFieldValue }) => getFieldValue(['properties', name, 'source_type']) === 'static' ? (<Form.Item {...restField} name={[name, 'value']} rules={[{ required: true }]} style={{ flex: 2, minWidth: '150px' }}><Input placeholder={t('Value')} /></Form.Item>) : (<Form.Item {...restField} name={[name, 'source_key']} rules={[{ required: true }]} style={{ flex: 2, minWidth: '150px' }}><Input placeholder={t('Source Key')} /></Form.Item>)}</Form.Item><Form.Item {...restField} name={[name, 'source_type']} rules={[{ required: true }]} style={{ flex: 1, minWidth: '100px' }}><Select placeholder={t('Source Type')}><Option value="static">{t('static')}</Option><Option value="dynamic">{t('dynamic')}</Option><Option value="mqtt">{t('mqtt')}</Option></Select></Form.Item><DeleteOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f', cursor: 'pointer' }} /></Space>))}<Form.Item><Button type="dashed" onClick={() => add({ key: '', value: '', source_type: 'static', source_key: '' })} block icon={<PlusOutlined />}>{t('Add Property')}</Button></Form.Item></>)}</Form.List>
+                                <Divider orientation="left" style={{ color: '#aaa', borderColor: '#434343' }}>{t('Actions')}</Divider>
+                                <Form.List name="actions">{(fields, { add, remove }) => (<>{fields.map(({ key, name: actionIndex, ...restField }) => (<div key={key} style={{ marginBottom: '15px', border: '1px solid #434343', padding: '10px', borderRadius: '4px' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}><Form.Item {...restField} label={t('Action Name')} name={[actionIndex, 'actionName']} rules={[{ required: true }]} style={{ marginBottom: 0, flexGrow: 1, marginRight: '10px' }}><Input placeholder="z.B. editSettings" /></Form.Item><Button type="link" danger icon={<DeleteOutlined />} onClick={() => remove(actionIndex)} /></div><Form.List name={[actionIndex, 'qhmiNames']}>{(qhmiFields, { add: addQhmi, remove: removeQhmi }) => (<>{qhmiFields.map(({ key: qhmiKey, name: qhmiName, ...qhmiRestField }) => (<Space key={qhmiKey} style={{ display: 'flex', marginBottom: 8 }} align="baseline"><Form.Item {...qhmiRestField} name={[qhmiName]} rules={[{ required: true }]} style={{ flexGrow: 1, marginBottom: 0 }}><Input placeholder={t('QHMI Variable Name')} /></Form.Item><DeleteOutlined onClick={() => removeQhmi(qhmiName)} style={{ color: '#ff4d4f', cursor: 'pointer' }} /></Space>))}<Form.Item style={{ marginBottom: 0 }}><Button type="dashed" onClick={() => addQhmi()} block icon={<PlusOutlined />}>{t('Add QHMI Variable')}</Button></Form.Item></>)}</Form.List></div>))}<Form.Item><Button type="dashed" onClick={() => add({ actionName: '', qhmiNames: [] })} block icon={<PlusOutlined />}>{t('Add Action')}</Button></Form.Item></>)}</Form.List>
+                           </Form>
                           </div>
-                        ))}
-                        <Button type="dashed" onClick={() => add()} block>
-                          {t('addAction')}
-                        </Button>
-                      </>
-                    )}
-                  </Form.List>
-                  <Divider style={{ backgroundColor: '#fff', margin: '20px 0' }} />
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                    <Button type="default" icon={<CopyOutlined />} onClick={duplicateItem}>
-                      {t('duplicate')}
-                    </Button>
-                    <Button type="primary" danger icon={<DeleteOutlined />} onClick={deleteItem}>
-                      {t('deleteItem')}
-                    </Button>
-                    <Button type="primary" htmlType="submit">
-                      {t('save')}
-                    </Button>
-                  </div>
-                </Form>
-              ) : (
-                <p>{t('selectMenuItemToEdit')}</p>
-              )}
-            </div>
-          </div>
+                          <div style={{ borderTop: '1px solid #434343', paddingTop: '10px', background: '#141414', flexShrink: 0 }}>
+                             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                                <Button type="default" icon={<CopyOutlined />} onClick={duplicateItem} disabled={isLoadingMenu || !selectedNode}>{t('duplicate')}</Button>
+                                <Popconfirm title={t('confirmDeleteItem')} onConfirm={deleteItem} okText={t('Yes')} cancelText={t('No')} disabled={isLoadingMenu || !selectedNode}><Button type="primary" danger icon={<DeleteOutlined />} disabled={isLoadingMenu || !selectedNode}>{t('deleteItem')}</Button></Popconfirm>
+                                <Button type="primary" onClick={() => form.submit()} /* Trigger Form onFinish */ loading={isLoadingMenu} style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }} disabled={!selectedNode || isLoadingMenu}>{t('Save Menu Item Changes')}</Button>
+                             </div>
+                          </div>
+                       </>
+                     ) : ( <p style={{ textAlign: 'center', marginTop: '20px' }}>{t('selectMenuItemToEdit')}</p> )}
+                   </div>
+                </div>
+            )}
         </TabPane>
 
-        {/* Tab für Logging-Einstellungen */}
-        <TabPane tab={t('Logging Settings')} key="2">
-          {/* Eingabe für neue Seite */}
-          <Form
-            layout="inline"
-            onFinish={handleAddPage}
-            style={{ marginBottom: '20px', backgroundColor: '#1f1f1f', padding: '16px', borderRadius: '4px' }}
-          >
-            <Form.Item>
-              <Input
-                placeholder={t('New Page')}
-                value={newPage}
-                onChange={(e) => setNewPage(e.target.value)}
-                style={{ width: '300px', backgroundColor: '#333', color: '#fff', border: '1px solid #434343' }}
-              />
-            </Form.Item>
-            <Form.Item>
-              <Button
-                type="primary"
-                htmlType="submit"
-                style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
-              >
-                {t('Add Page')}
-              </Button>
-            </Form.Item>
-          </Form>
-
-          {/* Eingabe für neues Topic */}
-          <Form
-            layout="inline"
-            onFinish={handleAddLoggingSetting}
-            style={{ marginBottom: '20px', backgroundColor: '#1f1f1f', padding: '16px', borderRadius: '4px' }}
-          >
-            <Form.Item>
-              <Input
-                placeholder={t('New Topic')}
-                value={newTopic}
-                onChange={(e) => setNewTopic(e.target.value)}
-                style={{ width: '300px', backgroundColor: '#333', color: '#fff', border: '1px solid #434343' }}
-              />
-            </Form.Item>
-            <Form.Item>
-              <Select
-                placeholder={t('Select Page')}
-                value={selectedPageForTopic}
-                onChange={(value) => setSelectedPageForTopic(value)}
-                style={{ width: '200px', backgroundColor: '#333', color: '#fff' }}
-              >
-                {tempPages.map(page => (
-                  <Option key={page} value={page}>{page}</Option>
-                ))}
-              </Select>
-            </Form.Item>
-            <Form.Item>
-              <Button
-                type="primary"
-                htmlType="submit"
-                style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
-              >
-                {t('Add Topic')}
-              </Button>
-            </Form.Item>
-          </Form>
-
-          <Tree
-            treeData={loggingTreeData}
-            defaultExpandAll
-            height={400}
-            style={{ backgroundColor: '#1f1f1f', color: '#fff', padding: '10px' }}
-          />
-          <div style={{ marginTop: '20px', textAlign: 'right' }}>
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              onClick={handleSaveLoggingSettings}
-              style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}
-            >
-              {t('Save')}
-            </Button>
-          </div>
+        {/* --- Tab: Visibility Rules --- */}
+        <TabPane tab={t('Rules')} key="3" style={{ flexGrow: 1, overflowY: 'auto' }}>
+             {isLoadingRules && <div style={{ textAlign: 'center', padding: 20 }}><Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} /></div>}
+            {!isLoadingRules && <RulesConfigTab rules={visibilityRules} onSave={handleSaveVisibilityRules} />}
         </TabPane>
+
+        {/* --- Tab: Logging Settings --- */}
+        <TabPane tab={t('Logging Settings')} key="2" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {isLoadingLogging && <div style={{ textAlign: 'center', padding: 20, flexGrow: 1 }}><Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} /></div>}
+            {!isLoadingLogging && (<>
+               <div style={{ flexShrink: 0 }}>
+                    <Form layout="inline" onFinish={handleAddPage} style={{ marginBottom: '10px', padding: '10px', background: '#1f1f1f', borderRadius: '4px' }}>
+                        <Form.Item><Input placeholder={t('New Page')} value={newPage} onChange={(e) => setNewPage(e.target.value)} style={{ width: '200px' }} /></Form.Item>
+                        <Form.Item><Button type="primary" htmlType="submit" style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}>{t('Add Page')}</Button></Form.Item>
+                    </Form>
+                    <Form layout="inline" onFinish={handleAddLoggingSetting} style={{ marginBottom: '10px', padding: '10px', background: '#1f1f1f', borderRadius: '4px' }}>
+                        <Form.Item><Input placeholder={t('New Topic')} value={newTopic} onChange={(e) => setNewTopic(e.target.value)} style={{ width: '250px' }} /></Form.Item>
+                        <Form.Item><Select placeholder={t('Select Page')} value={selectedPageForTopic} onChange={(value) => setSelectedPageForTopic(value)} style={{ width: '180px' }}>{tempPages.map(page => (<Option key={page} value={page}>{page}</Option>))}</Select></Form.Item>
+                        <Form.Item><Button type="primary" htmlType="submit" style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}>{t('Add Topic')}</Button></Form.Item>
+                    </Form>
+                </div>
+                <div style={{ flexGrow: 1, overflowY: 'auto', border: '1px solid #434343', borderRadius: '4px', background: '#1f1f1f', padding: '5px' }}>
+                    <Tree treeData={loggingTreeData} defaultExpandAll style={{ backgroundColor: 'transparent' }} blockNode />
+                </div>
+               <div style={{ marginTop: '10px', textAlign: 'right', flexShrink: 0, borderTop: '1px solid #434343', paddingTop: '10px', background: '#141414' }}>
+                 <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveLoggingSettings} loading={isLoadingLogging} style={{ backgroundColor: '#ffb000', borderColor: '#ffb000' }}>
+                   {t('Save Logging Settings')}
+                 </Button>
+               </div>
+             </>)}
+        </TabPane>
+
       </Tabs>
     </Modal>
   );
