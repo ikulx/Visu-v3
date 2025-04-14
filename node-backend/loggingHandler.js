@@ -37,6 +37,7 @@ class LoggingHandler {
     this.activeTopics = new Set();
     this.valueCache = new Map();
     this.minuteIntervalId = null;
+    this.loggablePages = new Set(); // NEU: Set für logbare Seiten
 
     // Kein .bind(this) mehr nötig, da Arrow Functions verwendet werden
     this.initialize();
@@ -48,7 +49,7 @@ class LoggingHandler {
     console.log("Initialisiere LoggingHandler...");
     try {
       await this.setupInfluxClient();
-      await this.loadLoggingSettings(); // Lädt initial aktive Topics
+      await this.loadAndBroadcastInitialData(); // Geändert: Lädt Settings UND Seiten
       this.setupMqttListener();
       this.startMinuteInterval();
       this.setupSocketHandlers(); // Richtet Listener für Client-Anfragen ein
@@ -80,26 +81,69 @@ class LoggingHandler {
      }
   }
 
-  loadLoggingSettings = async () => {
-    console.log("Lade Logging-Einstellungen und aktive Topics aus SQLite...");
+  // NEU: Extrahiert eindeutige Seiten aus den DB-Ergebnissen
+  extractLoggablePages = (settingsRows) => {
+      const pages = new Set();
+      if (Array.isArray(settingsRows)) {
+          settingsRows.forEach(row => {
+              // Nur aktivierte Settings mit definiertem Page-String berücksichtigen
+              if (row.enabled && row.page && typeof row.page === 'string') {
+                  row.page.split(',') // Komma-getrennte Seiten aufteilen
+                      .map(p => p.trim().toLowerCase()) // Leerzeichen entfernen, Kleinbuchstaben
+                      .filter(p => p !== '') // Leere Einträge filtern
+                      .forEach(p => pages.add(p)); // Zur Set hinzufügen (Duplikate automatisch ignoriert)
+              }
+          });
+      }
+      this.loggablePages = pages; // Internen State aktualisieren
+      console.log(`[LoggingHandler] Loggable pages updated (${this.loggablePages.size}):`, Array.from(this.loggablePages));
+      return Array.from(pages); // Array zurückgeben für Broadcast
+  }
+
+  // Angepasst: Lädt Settings UND Seiten und broadcastet beides initial und bei Updates
+  loadAndBroadcastInitialData = async () => {
+    console.log("Lade initiale Logging-Einstellungen und logbare Seiten aus SQLite...");
     try {
-      // Hole topic und enabled Status
-      const rows = await runDbQuery(this.sqliteDB, 'SELECT topic, enabled FROM logging_settings');
-      // Setze aktive Topics basierend auf enabled = 1 (oder true)
+      // Hole alle relevanten Daten in einer Abfrage (enabled und page sind wichtig)
+      const rows = await runDbQuery(this.sqliteDB, 'SELECT topic, enabled, page, color, description, unit FROM logging_settings ORDER BY topic ASC'); // Holen auch andere Felder für broadcastSettings
+
+      // Aktive Topics setzen (für interne Logik wie MQTT Listener)
       this.activeTopics = new Set(rows.filter(row => !!row.enabled).map(row => row.topic));
       console.log(`Aktive Logging-Topics neu geladen (${this.activeTopics.size}):`, Array.from(this.activeTopics));
+
+      // Logbare Seiten extrahieren und broadcasten
+      const pagesArray = this.extractLoggablePages(rows);
+      if (this.io) {
+           this.io.emit('loggable-pages-update', pagesArray);
+           console.log("[LoggingHandler] 'loggable-pages-update' gesendet.");
+      }
+
+      // Komplette Settings (für Konfiguration) broadcasten
+      const settingsForClient = rows.map(s => ({ ...s, id: s.id ?? null, enabled: !!s.enabled })); // ID und boolean für enabled
+      if (this.io) {
+          this.io.emit('logging-settings-update', settingsForClient);
+          console.log("[LoggingHandler] 'logging-settings-update' gesendet.");
+      }
+
     } catch (err) {
-        console.error('Fehler beim Laden der Logging-Einstellungen:', err);
-        this.activeTopics = new Set(); // Im Fehlerfall leeren
+        console.error('Fehler beim Laden der initialen Logging-Daten:', err);
+        this.activeTopics = new Set();
+        this.loggablePages = new Set();
+        // Optional: Leere Listen broadcasten bei Fehler?
+        if (this.io) {
+            this.io.emit('loggable-pages-update', []);
+            this.io.emit('logging-settings-update', []);
+        }
     }
   }
+
 
   setupMqttListener = () => {
     if (!this.mqttHandler || typeof this.mqttHandler.onMessage !== 'function') {
         console.error("MQTT Handler ist nicht korrekt initialisiert oder onMessage ist keine Funktion.");
         return;
     }
-    // Listener registrieren (angenommen, onMessage behandelt Mehrfachregistrierung intern oder wird nur einmal aufgerufen)
+    // Listener registrieren
     this.mqttHandler.onMessage((topic, value) => {
         if (this.activeTopics.has(topic)) {
             this.storeValue(topic, value);
@@ -110,7 +154,7 @@ class LoggingHandler {
 
   storeValue = (topic, value) => {
     const numericValue = parseFloat(value);
-    if (isNaN(numericValue)) return;
+    if (isNaN(numericValue)) return; // Nur numerische Werte speichern
     if (!this.valueCache.has(topic)) { this.valueCache.set(topic, []); }
     this.valueCache.get(topic).push(numericValue);
   }
@@ -122,19 +166,45 @@ class LoggingHandler {
   }
 
   writeAveragesToInflux = () => {
-    if (!this.influxWriteApi) { console.warn("[Logging] InfluxDB Write API nicht verfügbar."); return; }
+    if (!this.influxWriteApi) { /*console.warn("[Logging] InfluxDB Write API nicht verfügbar.");*/ return; }
     if (this.valueCache.size === 0) return;
     const points = []; const writeTimestamp = new Date();
-    for (const [topic, values] of this.valueCache.entries()) { if (values.length === 0) continue; const sum = values.reduce((acc, val) => acc + val, 0); const average = sum / values.length; const roundedAverage = parseFloat(average.toFixed(1)); if (!isNaN(roundedAverage)) { points.push( new Point('mqtt_logs').tag('topic', topic).floatField('average', roundedAverage).timestamp(writeTimestamp) ); } else { console.warn(`[Logging] Ungültiger Durchschnitt für Topic '${topic}'.`); } }
-    if (points.length > 0) { console.log(`[Logging] Schreibe ${points.length} Punkte nach InfluxDB...`); try { this.influxWriteApi.writePoints(points); this.influxWriteApi.flush(true).then(() => console.log(`[Logging] ${points.length} Punkte erfolgreich geschrieben.`)).catch(err => { console.error('[Logging] Fehler beim Flush:', err.message || err); if(err.body) console.error("Influx Flush Body:", err.body); }); } catch (writeError) { console.error('[Logging] Fehler beim Schreiben:', writeError.message || writeError); if(writeError.body) console.error("Influx Write Body:", writeError.body); } }
-    this.valueCache.clear();
+    for (const [topic, values] of this.valueCache.entries()) {
+        if (values.length === 0) continue;
+        const sum = values.reduce((acc, val) => acc + val, 0);
+        const average = sum / values.length;
+        const roundedAverage = parseFloat(average.toFixed(1)); // Auf eine Nachkommastelle runden
+        if (!isNaN(roundedAverage)) {
+            points.push(
+                new Point('mqtt_logs') // Measurement Name
+                  .tag('topic', topic) // Tag für den Topic
+                  .floatField('average', roundedAverage) // Feld für den Durchschnittswert
+                  .timestamp(writeTimestamp) // Zeitstempel explizit setzen
+            );
+        } else {
+            console.warn(`[Logging] Ungültiger Durchschnitt für Topic '${topic}'.`);
+        }
+    }
+    if (points.length > 0) {
+        // console.log(`[Logging] Schreibe ${points.length} Punkte nach InfluxDB...`); // Weniger verbose
+        try {
+            this.influxWriteApi.writePoints(points);
+            this.influxWriteApi.flush(true)
+              // .then(() => console.log(`[Logging] ${points.length} Punkte erfolgreich geschrieben.`)) // Weniger verbose
+              .catch(err => { console.error('[Logging] Fehler beim Flush:', err.message || err); if(err.body) console.error("Influx Flush Body:", err.body); });
+        } catch (writeError) {
+            console.error('[Logging] Fehler beim Schreiben:', writeError.message || writeError); if(writeError.body) console.error("Influx Write Body:", writeError.body);
+        }
+    }
+    this.valueCache.clear(); // Cache nach dem Schreiben leeren
   }
 
-  // Wird vom Frontend aufgerufen (z.B. LoggingSettingsModal)
+  // Wird vom Frontend aufgerufen (z.B. MenuConfigModal)
   updatePagesAndSettings = async ({ settings }) => {
      if (!Array.isArray(settings)) { console.error("updatePagesAndSettings: Ungültiges Settings-Format."); return; }
      console.log("Aktualisiere Logging-Einstellungen in SQLite...");
      try {
+         // DB Update wie bisher...
          await new Promise((resolve, reject) => {
              this.sqliteDB.run('BEGIN TRANSACTION', async (beginErr) => {
                  if (beginErr) return reject(beginErr);
@@ -146,40 +216,39 @@ class LoggingHandler {
                      await new Promise((res, rej) => stmt.finalize(err => err ? rej(err) : res()));
                      this.sqliteDB.run('COMMIT', async (commitErr) => { if (commitErr) { console.error("Commit Error:", commitErr); this.sqliteDB.run('ROLLBACK'); reject(commitErr); } else { console.log("[LoggingHandler] Logging settings saved."); resolve(); } });
                  } catch (processErr) { console.error("Fehler Update-Transaktion:", processErr); this.sqliteDB.run('ROLLBACK'); reject(processErr); } }); });
-         await this.loadLoggingSettings(); // Aktive Topics neu laden
+
+         // NACH erfolgreichem DB-Update: Daten neu laden und ALLES broadcasten
+         await this.loadAndBroadcastInitialData(); // Lädt Settings UND Seiten neu und sendet beides
          this.valueCache.clear(); // Cache leeren
-         await this.broadcastSettings(); // Update an Clients senden
+
      } catch (err) { console.error('Fehler beim Aktualisieren der Logging-Einstellungen:', err); }
   }
 
   // =====================================================
-  // METHODEN für Regelsteuerung (als Arrow Functions)
+  // METHODEN für Regelsteuerung (bleiben gleich)
   // =====================================================
   fetchLoggingSettings = async () => {
       console.log("[LoggingHandler] Fetching all logging settings...");
       try {
+          // Holen aller relevanten Spalten
           const settings = await runDbQuery(this.sqliteDB, "SELECT id, topic, enabled, color, page, description, unit FROM logging_settings ORDER BY topic ASC");
           return settings.map(s => ({ ...s, enabled: !!s.enabled })); // Konvertiere enabled zu boolean
       } catch (error) { console.error("[LoggingHandler] Error fetching logging settings:", error); return []; }
   }
 
-  broadcastSettings = async () => { // Sendet an ALLE Clients
+  // Wird nur noch von loadAndBroadcastInitialData getriggert
+  broadcastSettings = async () => {
      if (!this.io) { console.warn("[LoggingHandler - broadcast] io object is missing."); return; }
      try {
          console.log("[LoggingHandler - broadcast] Broadcasting updated logging settings...");
          const settings = await this.fetchLoggingSettings(); // Holt aktuelle Daten
          this.io.emit('logging-settings-update', settings); // Sendet Event
-     } catch (error) { console.error("[LoggingHandler - broadcast] Error:", error); }
+     } catch (error) { console.error("[LoggingHandler - broadcastSettings] Error:", error); }
   }
 
    /**
-    * NEU: Aktualisiert eine einzelne Spalte für ein bestimmtes Logging-Topic.
+    * Aktualisiert eine einzelne Spalte für ein bestimmtes Logging-Topic.
     * Wird von rulesHandler aufgerufen.
-    * @param {string} topic Das zu aktualisierende Topic.
-    * @param {'enabled'|'color'|'page'|'description'|'unit'} columnToUpdate Die zu aktualisierende Spalte.
-    * @param {any} newValue Der neue Wert für die Spalte.
-    * @param {sqlite3.Database} sqliteDB Die DB-Instanz (wird von rulesHandler übergeben).
-    * @returns {Promise<{changes: number}>}
     */
   performLoggingSettingUpdate = async (topic, columnToUpdate, newValue, sqliteDB = this.sqliteDB) => {
        const allowedColumns = ['enabled', 'color', 'page', 'description', 'unit'];
@@ -188,38 +257,19 @@ class LoggingHandler {
            console.error(`[LoggingHandler - Update] ${errorMsg}`);
            throw new Error(errorMsg);
        }
-
-       // Konvertiere boolean zu 0/1 spezifisch für 'enabled'-Spalte
-       const valueToSave = (columnToUpdate === 'enabled' && typeof newValue === 'boolean')
-                           ? (newValue ? 1 : 0)
-                           : newValue; // Andere Werte direkt übernehmen
-
-       console.log(`[LoggingHandler - Update] Updating topic '${topic}', column '${columnToUpdate}' to value '${valueToSave}' (Type: ${typeof valueToSave})`);
-
+       const valueToSave = (columnToUpdate === 'enabled' && typeof newValue === 'boolean') ? (newValue ? 1 : 0) : newValue;
+       console.log(`[LoggingHandler - Update] Updating topic '${topic}', column '${columnToUpdate}' to value '${valueToSave}'`);
        try {
-           const result = await runDbQuery(
-               sqliteDB, // Explizit die übergebene DB-Instanz verwenden
-               `UPDATE logging_settings SET "${columnToUpdate}" = ?, updated_at = strftime('%Y-%m-%dT%H:%M','now', 'localtime') WHERE topic = ?`,
-               [valueToSave, topic],
-               'run'
-           );
-
+           const result = await runDbQuery( sqliteDB, `UPDATE logging_settings SET "${columnToUpdate}" = ?, updated_at = strftime('%Y-%m-%dT%H:%M','now', 'localtime') WHERE topic = ?`, [valueToSave, topic], 'run');
            console.log(`[LoggingHandler - Update] Update result for topic '${topic}':`, result);
-
-           // Broadcast nur, wenn sich tatsächlich etwas geändert hat
            if (result.changes > 0) {
-               // Broadcast auslösen, um alle Clients zu informieren
-               await this.broadcastSettings();
-               // Wenn 'enabled' geändert wurde, internen Status aktualisieren
-               if (columnToUpdate === 'enabled') {
-                    await this.loadLoggingSettings(); // Lädt this.activeTopics neu
-               }
+               // Daten neu laden und ALLES broadcasten (Settings + Seitenliste)
+               await this.loadAndBroadcastInitialData();
            }
            return result;
-
        } catch (error) {
            console.error(`[LoggingHandler - Update] Error updating logging setting for topic '${topic}':`, error);
-           throw error; // Fehler weiterwerfen, damit rulesHandler ihn behandeln kann
+           throw error;
        }
    }
   // =====================================================
@@ -234,13 +284,13 @@ class LoggingHandler {
         const nameCol = `name_${lang || 'de'}`; const fallbackNameCol = 'name_de'; const baseNameCol = 'name'; const validLangCols = ['name_de', 'name_fr', 'name_en', 'name_it']; const finalNameCol = validLangCols.includes(nameCol) ? nameCol : fallbackNameCol;
         const buildCoalesce = (rq, fb, bs, al) => { const c = [rq]; if (fb && rq !== fb && validLangCols.includes(fb)) c.push(fb); if (!c.includes(bs)) c.push(bs); c.push('ls.topic'); return `COALESCE(${c.map(cl => `NULLIF(TRIM(${cl}), '')`).join(', ')}) AS ${al}`; };
         const selectLabelField = buildCoalesce(finalNameCol, fallbackNameCol, 'qv.NAME', 'display_label');
-        const metadataSql = ` SELECT ls.topic, ls.page, ${selectLabelField}, ls.unit, ls.color FROM logging_settings ls LEFT JOIN QHMI_VARIABLES qv ON ls.topic = qv.NAME WHERE ls.enabled = 1 AND ls.page LIKE ? `;
-        const allRowsForPage = await runDbQuery(this.sqliteDB, metadataSql, [`%${page}%`]);
-        const relevantRows = allRowsForPage.filter(row => row.page?.split(',').map(p => p.trim().toLowerCase()).includes(requestedPageLower));
+        const metadataSql = ` SELECT ls.topic, ls.page, ${selectLabelField}, ls.unit, ls.color FROM logging_settings ls LEFT JOIN QHMI_VARIABLES qv ON ls.topic = qv.NAME WHERE ls.enabled = 1 AND ls.page IS NOT NULL AND ls.page != '' AND ls.page LIKE ? `; // Sicherstellen, dass page existiert und nicht leer ist
+        const allRowsForPage = await runDbQuery(this.sqliteDB, metadataSql, [`%${page}%`]); // Suche mit LIKE, da kommagetrennt
+        const relevantRows = allRowsForPage.filter(row => row.page?.split(',').map(p => p.trim().toLowerCase()).includes(requestedPageLower)); // Filtere exakten Match nach Split
         const filteredTopics = relevantRows.map(row => row.topic); const metadataMap = new Map();
         relevantRows.forEach(row => { if (!metadataMap.has(row.topic)) { const u = row.unit; let fu = ''; if (u != null) { const us = String(u).trim(); if (us.toLowerCase() !== 'null' && us !== '') { fu = us; } } metadataMap.set(row.topic, { label: row.display_label || row.topic, unit: fu, color: row.color || '#ffffff' }); } });
         console.log('[Chart] Metadata:', Object.fromEntries(metadataMap));
-        if (filteredTopics.length === 0) { console.log('[Chart] Keine Topics.'); socket.emit('chart-data-update', []); return; }
+        if (filteredTopics.length === 0) { console.log('[Chart] Keine Topics für die Seite gefunden.'); socket.emit('chart-data-update', []); return; }
         const fluxTopicSet = `[${filteredTopics.map(topic => `"${topic.replace(/"/g, '\\"')}"`).join(', ')}]`; const topicFilterFlux = `contains(value: r.topic, set: ${fluxTopicSet})`; const fluxEndTime = end === 'now()' ? 'now()' : `time(v: "${end}")`;
         const fluxQuery = ` from(bucket: "${this.influxBucket}") |> range(start: ${start}, stop: ${fluxEndTime}) |> filter(fn: (r) => r._measurement == "mqtt_logs") |> filter(fn: (r) => r._field == "average") |> filter(fn: (r) => ${topicFilterFlux}) |> yield(name: "results") `;
         console.log('[Chart] Query:\n', fluxQuery);
@@ -258,28 +308,27 @@ class LoggingHandler {
     if (!this.io) { console.error("[LoggingHandler] Socket.IO Instanz (io) ist nicht verfügbar."); return; }
     this.io.on('connection', (socket) => {
       console.log(`[LoggingHandler] Client ${socket.id} connected.`);
-      // Sende initiale Settings beim Verbinden
-      this.broadcastSettings(); // Sendet an alle, inkl. dem neuen
+
+      // Sende initiale Settings UND logbare Seiten beim Verbinden an DIESEN Client
+      this.fetchLoggingSettings().then(settings => socket.emit('logging-settings-update', settings));
+      // Sende aktuelle Liste logbarer Seiten an DIESEN Client
+      socket.emit('loggable-pages-update', Array.from(this.loggablePages));
 
       // Listener für Client-Aktionen
       socket.on('update-pages-and-settings', (data) => { console.log("[LoggingHandler] 'update-pages-and-settings' empfangen."); this.updatePagesAndSettings(data); });
-      socket.on('request-logging-settings', () => { console.log(`[LoggingHandler] Client ${socket.id} fordert Settings.`); this.fetchLoggingSettings().then(settings => socket.emit('logging-settings-update', settings)); }); // Sende nur an anfragenden Client
+      // Explizite Anfrage für Settings (sendet nur an Anfragenden)
+      socket.on('request-logging-settings', () => { console.log(`[LoggingHandler] Client ${socket.id} fordert Settings.`); this.fetchLoggingSettings().then(settings => socket.emit('logging-settings-update', settings)); });
+      // Explizite Anfrage für logbare Seiten (sendet nur an Anfragenden)
+       socket.on('request-loggable-pages', () => { console.log(`[LoggingHandler] Client ${socket.id} fordert logbare Seiten.`); socket.emit('loggable-pages-update', Array.from(this.loggablePages)); });
       socket.on('request-chart-data', (params) => { const lang = params?.lang || 'de'; console.log(`[LoggingHandler] Client ${socket.id} fordert Chart-Daten (Lang: ${lang}):`, params); this.fetchChartData(socket, params, lang); });
     });
     console.log("Socket Handler für Logging eingerichtet.");
   }
-}
+} // Ende der Klasse LoggingHandler
 
 // --- Singleton Instanz und Setup Funktion ---
 let loggingHandlerInstance = null;
 
-/**
- * Erstellt oder gibt die Singleton-Instanz des LoggingHandlers zurück.
- * @param {import('socket.io').Server} io
- * @param {sqlite3.Database} sqliteDB
- * @param {object} mqttHandler
- * @returns {LoggingHandler}
- */
 function setupLogging(io, sqliteDB, mqttHandler) {
   if (!loggingHandlerInstance) {
      loggingHandlerInstance = new LoggingHandler(io, sqliteDB, mqttHandler);
@@ -287,25 +336,15 @@ function setupLogging(io, sqliteDB, mqttHandler) {
   return loggingHandlerInstance;
 }
 
-// --- Exportiere die Setup-Funktion UND die neue Update-Funktion ---
+// --- Export ---
 module.exports = {
     setupLogging,
-    /**
-     * Exportierte Funktion, die die Methode der Singleton-Instanz aufruft.
-     * Stellt sicher, dass der Handler initialisiert ist.
-     * @param {string} topic
-     * @param {'enabled'|'color'|'page'|'description'|'unit'} column
-     * @param {any} value
-     * @param {sqlite3.Database} db
-     */
+    // Direkter Zugriff auf die Update-Funktion der Instanz (für RulesHandler)
     performLoggingSettingUpdate: async (topic, column, value, db) => {
         if (!loggingHandlerInstance) {
             console.error("LoggingHandler not initialized yet when calling performLoggingSettingUpdate.");
             throw new Error("LoggingHandler not initialized yet.");
         }
-        // Rufe die Methode der Singleton-Instanz auf
-        // Übergib die DB-Instanz explizit, falls die Instanz-eigene nicht verwendet werden soll
-        // Stelle sicher, dass die io-Instanz in der Methode verfügbar ist (ist sie durch `this`)
         return loggingHandlerInstance.performLoggingSettingUpdate(topic, column, value, db || loggingHandlerInstance.sqliteDB);
     },
 };

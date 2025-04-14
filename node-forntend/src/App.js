@@ -1,12 +1,13 @@
+// src/App.js
 import React, { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'; // Navigate hinzugefügt
-import { Spin, Modal, Button } from 'antd'; // Button hinzugefügt
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Spin, Modal, Button } from 'antd';
 import { useTranslation } from 'react-i18next';
 import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
-import { produce } from 'immer'; // Immer importieren
-import { UserProvider } from './UserContext'; // UserProvider importieren
+import { produce } from 'immer';
+import { UserProvider } from './UserContext';
 
 // Lazy Loading für Komponenten
 const LazyPage = React.lazy(() => import('./Page'));
@@ -27,40 +28,42 @@ const flattenMenuItems = (items) => {
 
 // Hilfsfunktion zum rekursiven Finden und Aktualisieren im State mit Immer
 const updateMenuPropertyImmer = (items, link, propKey, value) => {
-  if (!items) return false; // Abbruch, wenn items undefiniert ist
-  let updated = false;
-  for (let i = 0; i < items.length; i++) {
+    if (!items) return false; // Abbruch, wenn items undefiniert ist
+    let updated = false;
+    for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (!item) continue;
 
       if (item.link === link) {
           if (propKey === 'label') {
+              // Unterscheidung, ob Label ein Objekt oder String ist
               if (typeof item.label === 'object' && item.label !== null) {
-                  item.label.value = value;
+                  item.label.value = value; // Nur den Wert im Objekt ändern
               } else {
-                  item.label = value;
+                  item.label = value; // Einfachen String überschreiben
               }
               updated = true;
           } else if (item.properties) {
-              // Nur aktualisieren, wenn sich der Wert tatsächlich ändert (optional, aber gut für Performance)
+              // Nur aktualisieren, wenn sich der Wert tatsächlich ändert
               if (item.properties[propKey] !== value) {
                    item.properties[propKey] = value;
                    updated = true;
               }
           }
-          // Optional: break, wenn Links eindeutig sind
+          // Optional: break; wenn Links eindeutig sind und Performance wichtig ist
           // break;
       }
 
+      // Rekursiv in Untermenüs suchen
       if (item.sub) {
-         // Wenn im Sub-Baum aktualisiert wurde, muss nicht weiter gesucht werden in diesem Ast
+         // Wenn im Sub-Baum aktualisiert wurde, muss nicht weiter gesucht werden
          if (updateMenuPropertyImmer(item.sub, link, propKey, value)) {
              updated = true;
-             // Optional: break; wenn Links eindeutig sind
+             // Optional: break;
          }
       }
-  }
-  return updated; // Gibt zurück, ob etwas geändert wurde
+    }
+    return updated; // Gibt zurück, ob etwas geändert wurde
 };
 
 function App() {
@@ -69,36 +72,34 @@ function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [connectionError, setConnectionError] = useState(null);
   const [isInitialMenuLoaded, setIsInitialMenuLoaded] = useState(false);
+  // +++ NEU: State für logbare Seiten +++
+  const [loggablePages, setLoggablePages] = useState([]);
 
   // Handler für MQTT Property Updates mit Immer und useCallback
   const handleMqttPropertyUpdate = useCallback((updates) => {
-    // console.log('MQTT property update received in App.js:', updates); // Debugging
     setMenuData(
       produce((draft) => {
         if (!draft || !draft.menuItems) return;
-        let changed = false;
+        // Iteriere durch alle empfangenen Updates
         for (const [key, value] of Object.entries(updates)) {
-          const dotIndex = key.lastIndexOf('.');
-          if (dotIndex === -1) continue;
+          const dotIndex = key.lastIndexOf('.'); // Finde letzten Punkt (trennt link von property)
+          if (dotIndex === -1) continue; // Überspringe, wenn kein Punkt gefunden wurde
           const link = key.substring(0, dotIndex);
           const propKey = key.substring(dotIndex + 1);
-          if (updateMenuPropertyImmer(draft.menuItems, link, propKey, value)) {
-              changed = true;
-          }
+          // Rufe die rekursive Update-Funktion auf
+          updateMenuPropertyImmer(draft.menuItems, link, propKey, value);
         }
-        // Nur neu rendern, wenn sich wirklich was geändert hat (Immer macht das ggf. schon intern)
-        // return changed ? draft : undefined; // Optional: Explizite Kontrolle
       })
     );
-  }, []); // Keine Abhängigkeiten
+  }, []); // Keine Abhängigkeiten, da produce verwendet wird
 
   // Handle vollständige Menü-Updates
    const handleMenuUpdate = useCallback((data) => {
         console.log('Full menu update received:', data ? 'Data received' : 'No data');
         if (data && Array.isArray(data.menuItems)) {
-             setMenuData(data);
+             setMenuData(data); // Setze die neuen Menüdaten
              if (!isInitialMenuLoaded) {
-                setIsInitialMenuLoaded(true);
+                setIsInitialMenuLoaded(true); // Markiere, dass das Menü geladen wurde
              }
         } else {
             console.warn("Ungültiges Menü-Update-Format empfangen.");
@@ -113,23 +114,26 @@ function App() {
       console.log('Socket connected');
       setIsConnected(true);
       setConnectionError(null);
-      // Fordere Menüdaten an (Backend sollte auf 'connection' reagieren oder einen spezifischen Event nutzen)
-       console.log("Requesting initial menu after connect...");
-       // Backend sendet 'menu-update' bei Verbindung, kein expliziter Request hier nötig.
+      // Backend sendet 'menu-update' und 'loggable-pages-update' bei Verbindung automatisch
+      // Explizite Anfrage nach loggable pages sicherheitshalber
+      console.log("Requesting loggable pages after connect...");
+      socket.emit('request-loggable-pages');
     };
 
     const onDisconnect = (reason) => {
       console.log('Socket disconnected:', reason);
       setIsConnected(false);
       setConnectionError(t('connectionLost'));
-       setIsInitialMenuLoaded(false);
+      setIsInitialMenuLoaded(false); // Menü muss neu geladen werden
+      setLoggablePages([]); // Logbare Seiten zurücksetzen bei Disconnect
     };
 
     const onConnectError = (error) => {
       console.log('Socket connect error:', error);
       setIsConnected(false);
       setConnectionError(t('connectionError', { message: error.message || 'Unknown error' }));
-       setIsInitialMenuLoaded(false);
+      setIsInitialMenuLoaded(false);
+      setLoggablePages([]); // Logbare Seiten zurücksetzen bei Fehler
     };
 
      const onReconnectAttempt = (attempt) => {
@@ -144,12 +148,21 @@ function App() {
 
      const onReconnectFailed = () => {
         console.log('Socket reconnect failed');
-        setConnectionError(t('reconnectFailed')); // String in i18n hinzufügen
+        setConnectionError(t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.')); // String in i18n hinzufügen/prüfen
      };
 
-      // Listener für spezifische Variablen-Updates (optional)
-      // const handleVariableUpdate = (data) => { ... };
+     // +++ NEU: Handler für logbare Seiten +++
+     const handleLoggablePagesUpdate = (pagesArray) => {
+         console.log('Loggable pages update received:', pagesArray);
+         if (Array.isArray(pagesArray)) {
+             setLoggablePages(pagesArray); // Aktualisiere den State
+         } else {
+             console.warn("Ungültiges Format für loggable-pages-update empfangen.");
+             setLoggablePages([]); // Setze auf leeres Array bei ungültigen Daten
+         }
+     };
 
+    // Listener registrieren
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
@@ -158,17 +171,20 @@ function App() {
     socket.on('reconnect_failed', onReconnectFailed);
     socket.on('menu-update', handleMenuUpdate);
     socket.on('mqtt-property-update', handleMqttPropertyUpdate);
-    // socket.on('variable-updated', handleVariableUpdate); // Aktivieren, wenn benötigt
+    // +++ NEU: Listener für logbare Seiten hinzufügen +++
+    socket.on('loggable-pages-update', handleLoggablePagesUpdate);
 
+    // Prüfe initialen Verbindungsstatus
     if (socket.connected) {
-       onConnect(); // Initialen Status setzen
+       onConnect(); // Initialen Status setzen und Daten anfordern
     } else {
       console.log("Initial socket status: disconnected");
       setConnectionError(t('initialConnectionError'));
-      setIsInitialMenuLoaded(false);
+      setIsInitialMenuLoaded(false); // Kein Menü geladen
+      setLoggablePages([]); // Keine logbaren Seiten bekannt
     }
 
-    // Cleanup-Funktion
+    // Cleanup-Funktion: Entfernt alle Listener beim Unmounten der Komponente
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
@@ -178,34 +194,36 @@ function App() {
       socket.off('reconnect_failed', onReconnectFailed);
       socket.off('menu-update', handleMenuUpdate);
       socket.off('mqtt-property-update', handleMqttPropertyUpdate);
-      // socket.off('variable-updated', handleVariableUpdate);
+      // +++ NEU: Listener entfernen +++
+      socket.off('loggable-pages-update', handleLoggablePagesUpdate);
     };
   }, [t, handleMqttPropertyUpdate, handleMenuUpdate]); // Callbacks als Abhängigkeiten
 
-  // Memoisiere abgeleitete Werte
+  // Memoisiere abgeleitete Werte: flache Menüliste und alle verwendeten SVGs
   const flatMenuItems = useMemo(() => flattenMenuItems(menuData.menuItems), [menuData.menuItems]);
   const allSvgs = useMemo(() => {
     const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
-    return Array.from(new Set(svgNames));
+    return Array.from(new Set(svgNames)); // Eindeutige SVG-Namen
   }, [flatMenuItems]);
 
-  // Finde das erste gültige Element für die Startroute
+  // Memoisiere den ersten gültigen Link für die Startroute (Fallback)
   const firstValidLink = useMemo(() => {
-       const homeItem = flatMenuItems.find(item => item.link === '/');
+       const homeItem = flatMenuItems.find(item => item.link === '/'); // Gibt es eine explizite Homepage?
        if (homeItem) return '/';
-       // Ansonsten das erste Element der Liste (außer /settings)
+       // Ansonsten das erste Element der Liste (außer /settings, falls vorhanden)
        const firstItem = flatMenuItems.find(item => item.link && item.link !== '/settings');
        return firstItem ? firstItem.link : null; // Fallback auf null, falls gar nichts da ist
   }, [flatMenuItems]);
 
 
+  // Rendern der Anwendung
   return (
-    // UserProvider umschließt die gesamte Anwendung
-    <UserProvider>
-        <Router>
-          <MainLayout menuItems={menuData.menuItems}> {/* Übergib den aktuellen State */}
+    <UserProvider> {/* Stellt Benutzerkontext bereit */}
+        <Router> {/* Router für Navigation */}
+           {/* +++ NEU: loggablePages an MainLayout übergeben +++ */}
+          <MainLayout menuItems={menuData.menuItems} loggablePages={loggablePages}>
             <Suspense
-              fallback={
+              fallback={ // Ladeindikator für lazy loaded Komponenten
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>
                   <Spin size="large" />
                 </div>
@@ -214,65 +232,55 @@ function App() {
              {/* Ladeindikator, bis Menü da oder Fehler auftritt */}
              {!isInitialMenuLoaded && !connectionError && (
                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>
-                   <Spin size="large" tip={t('loadingMenu')} />
+                   <Spin size="large" tip={t('loadingMenu', 'Lade Menü...')} />
                  </div>
                )}
               {/* Routen nur rendern, wenn Menü geladen ODER ein Verbindungsfehler angezeigt wird */}
               {(isInitialMenuLoaded || connectionError) && (
                  <Routes>
+                   {/* Erstelle Routen für jeden Menüeintrag */}
                    {flatMenuItems.map(item => (
-                     item && item.link ? ( // Zusätzlicher Check
+                     item && item.link ? ( // Sicherstellen, dass Item und Link existieren
                        <Route
-                         key={item.link}
-                         path={item.link}
-                         element={<LazyPage svg={item.svg} properties={item} allSvgs={allSvgs} />}
+                         key={item.link} // Eindeutiger Key für die Route
+                         path={item.link} // Pfad der Route
+                         element={<LazyPage svg={item.svg} properties={item} allSvgs={allSvgs} />} // Lazy loaded Seitenkomponente
                        />
-                     ) : null
+                     ) : null // Ignoriere ungültige Einträge
                    ))}
-                   {/* Fallback-Route: Leite auf die erste gültige Seite um oder zeige Meldung */}
-                   <Route path="/" element={firstValidLink ? <Navigate to={firstValidLink} replace /> : <div style={{ color: '#fff', padding: '20px' }}>{t('noPageAvailable')}</div>} />
-                   {/* <Route path="/settings" element={<LazySettingsPage />} /> // Falls Settings-Seite existiert */}
-                   <Route path="*" element={<div style={{ color: '#fff', padding: '20px'  }}>{t('pageNotFound')}</div>} />
+                   {/* Fallback-Route: Leite auf erste gültige Seite oder zeige Meldung */}
+                   <Route path="/" element={firstValidLink ? <Navigate to={firstValidLink} replace /> : <div style={{ color: '#fff', padding: '20px' }}>{t('noPageAvailable', 'Keine Seite verfügbar.')}</div>} />
+                   {/* Route für nicht gefundene Pfade */}
+                   <Route path="*" element={<div style={{ color: '#fff', padding: '20px' }}>{t('pageNotFound', 'Seite nicht gefunden.')}</div>} />
                  </Routes>
                )}
             </Suspense>
           </MainLayout>
 
-          {/* Fehler-Modal */}
-          <Modal
-             open={!!connectionError}
-             footer={null}
-             closable={false}
-             maskClosable={false}
-             centered
-             boddy={{
-                 backgroundColor: 'rgba(204, 0, 0, 0.9)',
-                 color: '#fff',
-                 display: 'flex',
-                 flexDirection: 'column',
-                 justifyContent: 'center',
-                 alignItems: 'center',
-                 textAlign: 'center',
-                 padding: '30px',
-                 borderRadius: '8px',
-                 minHeight: '150px'
-             }}
+           {/* Fehler-Modal für Verbindungsprobleme */}
+           <Modal
+             open={!!connectionError} // Sichtbar, wenn connectionError gesetzt ist
+             footer={null} closable={false} maskClosable={false} centered
+             styles={{ body: { backgroundColor: 'rgba(204, 0, 0, 0.9)', color: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '30px', borderRadius: '8px', minHeight: '150px'} }}
            >
              <div>
-               <h2 style={{ marginBottom: '15px', fontSize: '24px' }}>{t('connectionLostTitle')}</h2>
+               <h2 style={{ marginBottom: '15px', fontSize: '24px' }}>{t('connectionLostTitle', 'Verbindungsproblem')}</h2>
                <p style={{ fontSize: '18px', marginBottom: '10px' }}>{connectionError}</p>
-               {connectionError && connectionError !== t('reconnectFailed') && !connectionError.startsWith(t('connectionError').split(':')[0]) && ( // Zeige nur bei bestimmten Fehlern
-                  <p style={{ fontSize: '16px' }}>{t('reconnecting')}</p>
+               {/* Zeige "Verbinde neu...", außer bei bestimmten Fehlern */}
+               {connectionError && connectionError !== t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.') && !connectionError.startsWith(t('connectionError').split(':')[0]) && (
+                  <p style={{ fontSize: '16px' }}>{t('reconnecting', 'Versuche, die Verbindung wiederherzustellen...')}</p>
                )}
-                {connectionError === t('reconnectFailed') && (
+                {/* Zeige Reload-Button, wenn Wiederverbindung endgültig scheitert */}
+                {connectionError === t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.') && (
                    <Button type="primary" onClick={() => window.location.reload()} style={{ marginTop: '20px' }}>
-                      {t('reloadPage')}
+                      {t('reloadPage', 'Seite neu laden')}
                    </Button>
                 )}
              </div>
            </Modal>
+
         </Router>
-    </UserProvider> // UserProvider schließt hier
+    </UserProvider>
   );
 }
 
