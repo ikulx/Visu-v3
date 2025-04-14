@@ -1,12 +1,30 @@
 // src/dbRoutes.js
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const path = require('path'); // <<< KORRIGIERTE ZEILE
 const router = express.Router();
-const { fetchMenuForFrontend } = require('./menuHandler'); // Benötigt für Menü-Broadcast
-
-// Importiere checkAndSendMqttUpdates wieder, um es nach Batch aufzurufen
+const { fetchMenuForFrontend } = require('./menuHandler');
 const { checkAndSendMqttUpdates } = require('./mqttHandler');
+
+// +++ NEU: CSV- und Upload-Abhängigkeiten +++
+const Papa = require('papaparse'); // CSV Parser/Unparser
+const multer = require('multer'); // Middleware für File Uploads
+
+// +++ NEU: Multer-Konfiguration (speichert Datei im Speicher) +++
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // Limit 10MB
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Nur CSV-Dateien sind erlaubt!'), false);
+        }
+    }
+});
+// ... (Rest der Datei bleibt unverändert) ...
+
 
 const nodeRedUrl = 'http://192.168.10.31:1880/db/Changes';
 const nodeRedFullUrl = 'http://192.168.10.31:1880/db/fullChanges';
@@ -22,16 +40,16 @@ const allowedColumns = [
   "id", "NAME", "VAR_VALUE", "unit", "TYPE", "OPTI", "adresse", "faktor",
   "MIN", "MAX", "EDITOR", "sort", "visible", "HKL", "HKL_Feld",
   "updated_at", "created_at", "last_modified", "tag_top", "tag_sub",
-  "benutzer", "beschreibung", "NAME_fr", "NAME_en", "NAME_it", "NAME_de", // NAME_de hinzugefügt
-  "OPTI_fr", "OPTI_en", "OPTI_it", "OPTI_de", // OPTI_de hinzugefügt
+  "benutzer", "beschreibung", "NAME_fr", "NAME_en", "NAME_it", "NAME_de",
+  "OPTI_fr", "OPTI_en", "OPTI_it", "OPTI_de",
   "beschreibung_fr", "beschreibung_en", "beschreibung_it"
 ];
-// Spalten, deren Änderung einen Settings-Broadcast auslöst
-// HINWEIS: Diese Liste wird *nicht* mehr verwendet, um den Broadcast zu steuern,
-// aber sie kann zur Dokumentation oder für zukünftige spezifische Logik nützlich sein.
+// Primärschlüssel für Upsert-Logik
+const primaryKeyColumn = "NAME";
+
+// Spalten, deren Änderung einen Settings-Broadcast auslöst (nicht mehr steuernd, nur Doku)
 const settingsColumns = ['benutzer', 'visible', 'tag_top', 'tag_sub', 'TYPE', 'OPTI_de', 'OPTI_fr', 'OPTI_en', 'OPTI_it', 'MIN', 'MAX', 'unit', 'NAME_de', 'NAME_fr', 'NAME_en', 'NAME_it', 'beschreibung', 'beschreibung_fr', 'beschreibung_en', 'beschreibung_it'];
-// Spalten, deren Änderung einen Menü-Broadcast auslöst
-// HINWEIS: Diese Liste wird *nicht* mehr verwendet, um den Broadcast zu steuern.
+// Spalten, deren Änderung einen Menü-Broadcast auslöst (nicht mehr steuernd, nur Doku)
 const menuRelevantColumns = ['VAR_VALUE', 'visible'];
 
 // --- Konsolidierte Update-Funktion ---
@@ -225,8 +243,283 @@ async function broadcastSettings(socket = null, user = null, db = sqliteDB) { //
   }
 }
 
+// --- NEUE Routen für CSV Export/Import ---
 
-// --- Express Routen ---
+/**
+ * GET /db/export/variables.csv
+ * Exportiert alle QHMI_VARIABLES als CSV-Datei.
+ */
+router.get('/export/variables.csv', async (req, res) => {
+    console.log('[Export] Anfrage zum Exportieren von Variablen als CSV empfangen.');
+    try {
+        const rows = await new Promise((resolve, reject) => {
+            // Alle Spalten für den Export holen, sortiert nach NAME
+            sqliteDB.all(`SELECT * FROM QHMI_VARIABLES ORDER BY ${primaryKeyColumn} ASC`, [], (err, rows) => {
+                if (err) {
+                    console.error("[Export] Fehler beim Abrufen der Variablen aus der DB:", err);
+                    reject(new Error("Datenbankfehler beim Export."));
+                } else {
+                    resolve(rows);
+                }
+            });
+        });
+
+        if (!rows || rows.length === 0) {
+            console.log("[Export] Keine Variablen zum Exportieren gefunden.");
+            // Optional: Leere CSV senden oder Fehler? Senden wir eine leere CSV mit Header.
+            // const csvHeaders = Papa.unparse([{}], { header: true }); // Erzeugt nur Header
+             // Erzeuge CSV-String mit Header
+             const csvData = Papa.unparse(rows, {
+                 header: true,
+                 quotes: true, // Werte bei Bedarf in Anführungszeichen setzen
+                 skipEmptyLines: true
+             });
+             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+             const filename = `ycontrol_variables_${timestamp}.csv`;
+
+             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+             res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+             res.status(200).send(Buffer.from(csvData, 'utf-8')); // UTF-8 erzwingen
+             console.log(`[Export] ${rows.length} Variablen erfolgreich als ${filename} exportiert.`);
+
+
+        } else {
+             // Erzeuge CSV-String mit Header
+            const csvData = Papa.unparse(rows, {
+                header: true,
+                quotes: true, // Werte bei Bedarf in Anführungszeichen setzen
+                skipEmptyLines: true
+            });
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `ycontrol_variables_${timestamp}.csv`;
+
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8'); // UTF-8 sicherstellen
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.status(200).send(Buffer.from(csvData, 'utf-8')); // Als Buffer senden mit UTF-8 Encoding
+            console.log(`[Export] ${rows.length} Variablen erfolgreich als ${filename} exportiert.`);
+        }
+
+    } catch (error) {
+        console.error("[Export] Unerwarteter Fehler beim Export:", error);
+        res.status(500).json({ error: 'Fehler beim Erstellen der Exportdatei.', details: error.message });
+    }
+});
+
+/**
+ * POST /db/import/variables
+ * Importiert QHMI_VARIABLES aus einer hochgeladenen CSV-Datei.
+ * Verwendet eine Upsert-Strategie (Update oder Insert).
+ */
+router.post('/import/variables', upload.single('csvfile'), async (req, res) => {
+    console.log('[Import] Anfrage zum Importieren von Variablen aus CSV empfangen.');
+    if (!req.file) {
+        console.log('[Import] Keine Datei hochgeladen.');
+        return res.status(400).json({ error: 'Keine CSV-Datei hochgeladen.' });
+    }
+
+    const csvString = req.file.buffer.toString('utf-8');
+    let importCounter = { inserted: 0, updated: 0, skipped: 0 };
+    const errors = [];
+
+    try {
+        console.log('[Import] Parse CSV-Datei...');
+        const parseResult = Papa.parse(csvString, {
+            header: true,       // Erste Zeile als Header verwenden
+            skipEmptyLines: true, // Leere Zeilen überspringen
+            dynamicTyping: false, // Alle Werte als String behandeln, DB kümmert sich um Typen
+            transformHeader: header => header.trim() // Header-Leerzeichen entfernen
+        });
+
+        if (parseResult.errors.length > 0) {
+            console.error('[Import] Fehler beim Parsen der CSV:', parseResult.errors);
+            return res.status(400).json({
+                error: 'Fehler beim Parsen der CSV-Datei.',
+                details: parseResult.errors.map(e => `Zeile ${e.row}: ${e.message}`).join('; ')
+            });
+        }
+
+        const data = parseResult.data;
+        if (!data || data.length === 0) {
+            console.log('[Import] CSV-Datei ist leer oder enthält keine Datenzeilen.');
+            return res.status(400).json({ error: 'Die CSV-Datei enthält keine Daten.' });
+        }
+        console.log(`[Import] ${data.length} Zeilen aus CSV geparst.`);
+
+        // Validierung der Spaltennamen gegen allowedColumns (Header der CSV)
+        const csvHeaders = parseResult.meta.fields;
+        const invalidHeaders = csvHeaders.filter(h => !allowedColumns.includes(h));
+        if (invalidHeaders.length > 0) {
+             console.warn(`[Import] Ungültige Spalten in CSV gefunden: ${invalidHeaders.join(', ')}. Diese werden ignoriert.`);
+             // Optional: Import abbrechen, wenn ungültige Spalten kritisch sind
+             // return res.status(400).json({ error: 'CSV enthält ungültige Spalten.', details: invalidHeaders });
+        }
+        // Nur gültige Spalten für die DB-Operationen verwenden
+        const validDbColumns = csvHeaders.filter(h => allowedColumns.includes(h) && h !== 'id'); // id ausschließen, da auto-increment
+        const primaryKeyIndex = validDbColumns.indexOf(primaryKeyColumn);
+        if(primaryKeyIndex === -1 && !validDbColumns.includes(primaryKeyColumn)) { // Sicherstellen, dass PK da ist
+            validDbColumns.push(primaryKeyColumn); // PK hinzufügen, falls nicht explizit dabei, aber für Upsert nötig
+             console.warn(`[Import] Primärschlüssel '${primaryKeyColumn}' nicht in validen CSV-Spalten gefunden, wird für Upsert benötigt.`);
+        }
+        if (!validDbColumns.includes(primaryKeyColumn)) {
+             console.error(`[Import] Primärschlüssel '${primaryKeyColumn}' fehlt in den CSV-Daten oder ist keine erlaubte Spalte.`);
+             return res.status(400).json({ error: `Primärschlüssel '${primaryKeyColumn}' fehlt in den CSV-Daten.` });
+        }
+
+
+        console.log('[Import] Starte Datenbank-Transaktion...');
+        // Upsert-Logik innerhalb einer Transaktion
+        await new Promise((resolve, reject) => {
+            sqliteDB.serialize(() => {
+                sqliteDB.run('BEGIN TRANSACTION', (beginErr) => {
+                    if (beginErr) return reject(new Error(`DB Transaktion Startfehler: ${beginErr.message}`));
+
+                    // Prepare Statements für Insert und Update
+                    const placeholders = validDbColumns.map(() => '?').join(',');
+                    const insertSql = `INSERT INTO QHMI_VARIABLES (${validDbColumns.join(',')}) VALUES (${placeholders})`;
+                    const updatePlaceholders = validDbColumns.filter(col => col !== primaryKeyColumn).map(col => `${col} = ?`).join(', ');
+                    const updateSql = `UPDATE QHMI_VARIABLES SET ${updatePlaceholders} WHERE ${primaryKeyColumn} = ?`;
+
+                    try {
+                        const insertStmt = sqliteDB.prepare(insertSql);
+                        const updateStmt = sqliteDB.prepare(updateSql);
+                        let rowNum = 0; // Für Fehlermeldungen
+
+                        const processRow = async (row) => {
+                             rowNum++;
+                            const primaryKeyValue = row[primaryKeyColumn];
+                            if (primaryKeyValue === undefined || primaryKeyValue === null || String(primaryKeyValue).trim() === '') {
+                                errors.push(`Zeile ${rowNum}: Primärschlüssel '${primaryKeyColumn}' fehlt oder ist leer.`);
+                                importCounter.skipped++;
+                                return; // Nächste Zeile
+                            }
+
+                             // Bereite Werte für Insert/Update vor (nur gültige Spalten)
+                             const valuesForInsert = validDbColumns.map(col => row[col] !== undefined ? String(row[col]) : null); // Alle als String, null wenn nicht vorhanden
+                             const valuesForUpdate = validDbColumns.filter(col => col !== primaryKeyColumn).map(col => row[col] !== undefined ? String(row[col]) : null);
+                             valuesForUpdate.push(primaryKeyValue); // PK ans Ende für WHERE-Klausel
+
+                            // Prüfen, ob Eintrag existiert
+                            const exists = await new Promise((res, rej) => {
+                                sqliteDB.get(`SELECT 1 FROM QHMI_VARIABLES WHERE ${primaryKeyColumn} = ?`, [primaryKeyValue], (err, result) => {
+                                    if (err) rej(new Error(`DB Fehler bei Existenzprüfung für '${primaryKeyValue}': ${err.message}`));
+                                    else res(!!result);
+                                });
+                            });
+
+                            if (exists) {
+                                // Update
+                                await new Promise((res, rej) => {
+                                    updateStmt.run(valuesForUpdate, function(updateErr) {
+                                        if (updateErr) rej(new Error(`DB Update Fehler für '${primaryKeyValue}' (Zeile ${rowNum}): ${updateErr.message}`));
+                                        else { importCounter.updated += this.changes > 0 ? 1 : 0; res(); } // Zähle nur wenn wirklich geändert
+                                    });
+                                });
+                            } else {
+                                // Insert
+                                await new Promise((res, rej) => {
+                                    insertStmt.run(valuesForInsert, function(insertErr) {
+                                        if (insertErr) rej(new Error(`DB Insert Fehler für '${primaryKeyValue}' (Zeile ${rowNum}): ${insertErr.message}`));
+                                        else { importCounter.inserted++; res(); }
+                                    });
+                                });
+                            }
+                        }; // Ende processRow
+
+                         // Alle Zeilen sequentiell verarbeiten
+                         data.reduce((promiseChain, row) => {
+                              return promiseChain.then(() => processRow(row));
+                         }, Promise.resolve())
+                         .then(() => {
+                              // Finalize statements after all rows processed
+                              Promise.all([
+                                  new Promise((res, rej) => insertStmt.finalize(err => err ? rej(err) : res())),
+                                  new Promise((res, rej) => updateStmt.finalize(err => err ? rej(err) : res()))
+                              ]).then(() => {
+                                   // Commit transaction
+                                   sqliteDB.run('COMMIT', (commitErr) => {
+                                        if (commitErr) {
+                                             reject(new Error(`DB Commit Fehler: ${commitErr.message}`));
+                                        } else {
+                                             console.log('[Import] Transaktion erfolgreich commited.');
+                                             resolve(); // Gesamte Transaktion erfolgreich
+                                        }
+                                   });
+                              }).catch(finalizeErr => reject(new Error(`DB Finalize Fehler: ${finalizeErr.message}`)));
+                         })
+                         .catch(rowProcessingErr => {
+                             // Fehler während der Zeilenverarbeitung -> Rollback
+                             reject(rowProcessingErr); // Wird im äußeren Catch behandelt
+                         });
+
+                    } catch (stmtErr) {
+                        // Fehler beim Vorbereiten der Statements
+                        reject(new Error(`DB Statement Fehler: ${stmtErr.message}`));
+                    }
+                }); // Ende BEGIN TRANSACTION Callback
+            }); // Ende Serialize
+        }); // Ende await new Promise
+
+        console.log('[Import] Datenbank-Operationen abgeschlossen.');
+        console.log('[Import] Ergebnis:', importCounter);
+        if (errors.length > 0) {
+             console.warn('[Import] Fehler während des Imports aufgetreten:', errors);
+        }
+
+        // ---- Broadcast Updates NACH erfolgreichem Import ----
+        if (global.io) {
+            console.log("[Import] Sende Updates an Clients nach Import...");
+            try {
+                await broadcastSettings(); // Sendet aktualisierte Settings an alle
+                 const menu = await fetchMenuForFrontend(sqliteDB); // Holt aktualisiertes Menü
+                 global.io.emit("menu-update", menu); // Sendet aktualisiertes Menü an alle
+                console.log("[Import] Settings- und Menü-Updates gesendet.");
+
+                 // MQTT Check nur wenn tatsächlich Daten importiert wurden
+                 if (importCounter.inserted > 0 || importCounter.updated > 0) {
+                      console.log("[Import] Trigger MQTT Check nach Import.");
+                      await checkAndSendMqttUpdates(global.io, sqliteDB);
+                 }
+
+            } catch (broadcastError) {
+                console.error("[Import] Fehler beim Senden der Updates nach Import:", broadcastError);
+                // Fehler dem Client melden? Optional.
+                 errors.push(`Fehler beim Senden der Live-Updates: ${broadcastError.message}`);
+            }
+        }
+        // ---- Ende Broadcast ----
+
+        // Finale Antwort an Client
+        if (errors.length > 0) {
+            res.status(207).json({ // Multi-Status
+                message: `Import abgeschlossen mit ${errors.length} Fehlern.`,
+                inserted: importCounter.inserted,
+                updated: importCounter.updated,
+                skipped: importCounter.skipped,
+                errors: errors
+            });
+        } else {
+            res.status(200).json({
+                message: 'Variablen erfolgreich importiert.',
+                inserted: importCounter.inserted,
+                updated: importCounter.updated,
+                skipped: importCounter.skipped
+            });
+        }
+
+    } catch (error) {
+        console.error("[Import] Unerwarteter Fehler beim Import:", error);
+        // Versuche Rollback bei unerwartetem Fehler
+        sqliteDB.run('ROLLBACK', (rollbackErr) => {
+            if (rollbackErr) console.error("[Import] Rollback nach Fehler fehlgeschlagen:", rollbackErr);
+        });
+        res.status(500).json({ error: 'Fehler beim Verarbeiten der CSV-Datei.', details: error.message });
+    }
+});
+
+
+// --- Bestehende Express Routen (/update-variable, /getAllValue, /update-batch) ---
+
 router.post('/update-variable', async (req, res) => {
   const { key, search, target, value } = req.body;
   try {
@@ -398,4 +691,4 @@ router.post('/update-batch', async (req, res) => {
 module.exports = router; // Router als Default Export
 module.exports.performVariableUpdate = performVariableUpdate;
 module.exports.broadcastSettings = broadcastSettings;
-module.exports.sendNodeRedUpdate = sendNodeRedUpdate;
+module.exports.sendNodeRedUpdate = sendNodeRedUpdate; // Bleibt exportiert, falls extern benötigt
