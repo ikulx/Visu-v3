@@ -72,7 +72,7 @@ function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [connectionError, setConnectionError] = useState(null);
   const [isInitialMenuLoaded, setIsInitialMenuLoaded] = useState(false);
-  // +++ NEU: State für logbare Seiten +++
+  // State für logbare Seiten (wird von loggingHandler befüllt)
   const [loggablePages, setLoggablePages] = useState([]);
 
   // Handler für MQTT Property Updates mit Immer und useCallback
@@ -151,7 +151,7 @@ function App() {
         setConnectionError(t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.')); // String in i18n hinzufügen/prüfen
      };
 
-     // +++ NEU: Handler für logbare Seiten +++
+     // Handler für logbare Seiten Updates
      const handleLoggablePagesUpdate = (pagesArray) => {
          console.log('Loggable pages update received:', pagesArray);
          if (Array.isArray(pagesArray)) {
@@ -171,7 +171,7 @@ function App() {
     socket.on('reconnect_failed', onReconnectFailed);
     socket.on('menu-update', handleMenuUpdate);
     socket.on('mqtt-property-update', handleMqttPropertyUpdate);
-    // +++ NEU: Listener für logbare Seiten hinzufügen +++
+    // Listener für logbare Seiten
     socket.on('loggable-pages-update', handleLoggablePagesUpdate);
 
     // Prüfe initialen Verbindungsstatus
@@ -194,7 +194,6 @@ function App() {
       socket.off('reconnect_failed', onReconnectFailed);
       socket.off('menu-update', handleMenuUpdate);
       socket.off('mqtt-property-update', handleMqttPropertyUpdate);
-      // +++ NEU: Listener entfernen +++
       socket.off('loggable-pages-update', handleLoggablePagesUpdate);
     };
   }, [t, handleMqttPropertyUpdate, handleMenuUpdate]); // Callbacks als Abhängigkeiten
@@ -220,8 +219,7 @@ function App() {
   return (
     <UserProvider> {/* Stellt Benutzerkontext bereit */}
         <Router> {/* Router für Navigation */}
-           {/* +++ NEU: loggablePages an MainLayout übergeben +++ */}
-          <MainLayout menuItems={menuData.menuItems} loggablePages={loggablePages}>
+          <MainLayout menuItems={menuData.menuItems} loggablePages={loggablePages}> {/* loggablePages weitergeben */}
             <Suspense
               fallback={ // Ladeindikator für lazy loaded Komponenten
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>

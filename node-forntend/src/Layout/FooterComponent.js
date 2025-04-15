@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Row, Col, Typography, Button } from 'antd';
 import { useLocation } from 'react-router-dom';
-import io from 'socket.io-client'; // Wird nur noch für Footer-Daten benötigt
+import io from 'socket.io-client';
 import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
@@ -10,160 +10,119 @@ import {
   LineChartOutlined
 } from '@ant-design/icons';
 import ChartPopup from '../ChartPopup';
+// +++ NEU: AlarmPopup importieren +++
+import AlarmsPopup from './AlarmsPopup'; // Pfad anpassen, falls nötig
 import './FooterComponent.css';
 
 const { Text } = Typography;
 
-// +++ NEU: loggablePages als Prop empfangen +++
-const FooterComponent = ({ loggablePages = [] }) => { // Standardwert ist leeres Array
+const FooterComponent = ({ loggablePages = [] }) => {
   const [footerData, setFooterData] = useState({ temperature: '–', alarmButton: 0 });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [chartVisible, setChartVisible] = useState(false);
-  const location = useLocation(); // Hook für den aktuellen Pfad
+  // +++ NEU: State für Alarm-Popup +++
+  const [alarmsPopupVisible, setAlarmsPopupVisible] = useState(false);
+  const location = useLocation();
 
-  // Aktuelle Seite bestimmen (ohne führenden Schrägstrich, Kleinbuchstaben)
   const currentPage = (location.pathname.startsWith('/')
-    ? location.pathname.substring(1) // Entferne führenden '/'
+    ? location.pathname.substring(1)
     : location.pathname
-  ).toLowerCase(); // Umwandlung in Kleinbuchstaben für konsistenten Vergleich
+  ).toLowerCase();
 
-  // Effekt für Footer-Daten (Temperatur, Alarm) und Uhrzeit
   useEffect(() => {
-    // Socket-Verbindung nur noch für 'footer-update'
     const socket = io(`http://${window.location.hostname}:3001`);
-    socket.on('footer-update', data => {
-      setFooterData(prevData => ({ ...prevData, ...data })); // Update Footer Daten
-    });
+    // Höre auf allgemeine Footer-Updates
+    const handleFooterUpdate = (data) => {
+        // Nur aktualisieren, wenn sich Daten geändert haben
+        setFooterData(prevData => ({ ...prevData, ...data }));
+    }
+    socket.on('footer-update', handleFooterUpdate);
 
-    // Timer für die Uhrzeit
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000); // Jede Sekunde aktualisieren
+    }, 1000);
 
-    // Cleanup-Funktion: Socket trennen und Timer löschen
+    // Cleanup beim Unmounten
     return () => {
+      socket.off('footer-update', handleFooterUpdate);
       socket.disconnect();
       clearInterval(timer);
     };
-  }, []); // Dieser Effekt läuft nur einmal beim Mounten
+  }, []); // Läuft nur einmal
 
-  // Zeit und Datum formatieren
-  const formattedTime = currentTime.toLocaleTimeString('de-DE', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  const formattedTime = currentTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', hour12: false });
   const formattedDate = currentTime.toLocaleDateString('de-DE');
 
-  // Handler für Klick auf Logo -> Seite neu laden
-  const handleLogoClick = () => {
-    window.location.reload();
+  const handleLogoClick = () => window.location.reload();
+
+  // +++ GEÄNDERT: Öffnet jetzt das Alarm-Popup +++
+  const handleAlarmButtonClick = () => {
+    setAlarmsPopupVisible(true);
   };
 
-  // Handler für Klick auf Alarm-Button (Beispiel)
-  const handleCheckClick = () => {
-    // Hier könnte Logik stehen, um z.B. Alarme zu quittieren
-    console.log('Alarm-Button geklickt!');
-    // alert('Alarm-Button wurde geklickt!'); // Beispiel-Alert
-  };
+  const handleChartClick = () => setChartVisible(true);
 
-  // Handler für Klick auf Chart-Button -> Popup öffnen
-  const handleChartClick = () => {
-    setChartVisible(true);
-  };
+  // Alarmwert sicher auslesen
+  const alarmVal = Number(footerData?.alarmButton || 0);
 
-  // Alarmwert aus den Footer-Daten extrahieren
-  const alarmVal = Number(footerData.alarmButton);
-
-  // Funktion zur Bestimmung des dynamischen Alarm-Icons
+  // Funktion zur Bestimmung des Alarm-Icons
   const getDynamicIcon = () => {
-    if (alarmVal === 1 || alarmVal === 11) { // OK / Quittiert
-      return <CheckCircleOutlined style={{ fontSize: '32px', color: '#52c41a' }} />;
-    } else if (alarmVal === 2 || alarmVal === 12) { // Warnung / Quittiert
-      return <ExclamationCircleOutlined style={{ fontSize: '32px', color: '#faad14' }} />;
-    } else if (alarmVal === 3 || alarmVal === 13) { // Alarm / Quittiert
-      return <WarningOutlined className="pulsating-icon" style={{ fontSize: '32px', color: '#f5222d' }} />;
-    } else { // Default / Kein Alarm
-      return <CheckCircleOutlined style={{ fontSize: '32px', color: '#fff' }} />;
-    }
+    // Zustand 11, 12, 13 könnten quittierte Alarme sein? (Beispiel)
+    if (alarmVal === 1 || alarmVal === 11) return <CheckCircleOutlined style={{ fontSize: '32px', color: '#52c41a' }} />; // Grün
+    if (alarmVal === 2 || alarmVal === 12) return <ExclamationCircleOutlined style={{ fontSize: '32px', color: '#faad14' }} />; // Gelb
+    if (alarmVal === 3 || alarmVal === 13) return <WarningOutlined className="pulsating-icon" style={{ fontSize: '32px', color: '#f5222d' }} />; // Rot pulsierend
+    return <CheckCircleOutlined style={{ fontSize: '32px', color: '#fff' }} />; // Default weiß/grau oder grün? Nehmen wir weiß.
   };
 
-  // Basis-Styling für die Footer-Buttons
-  const buttonStyle = {
-    width: '64px',
-    height: '64px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: '8px', // Abstand zwischen Buttons
-    border: 'none',
-    boxShadow: 'none',
-    padding: 0, // Kein Innenabstand
-    backgroundColor: 'transparent', // Transparenter Hintergrund
-  };
+  const buttonStyle = { width: '64px', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '8px', border: 'none', boxShadow: 'none', padding: 0, backgroundColor: 'transparent' };
+  const firstButtonStyle = { ...buttonStyle, border: alarmVal > 10 ? '2px solid blue' : 'none' }; // Beispiel für Quittierungsanzeige
 
-  // Spezielles Styling für den ersten Button (Alarm), ggf. mit Rahmen
-  const firstButtonStyle = {
-    ...buttonStyle,
-    border: alarmVal > 10 ? '2px solid blue' : 'none', // Blauer Rahmen bei quittiertem Zustand > 10?
-  };
-
-  // +++ NEU: Prüfen, ob der Log-Button angezeigt werden soll +++
-  // Stelle sicher, dass loggablePages ein Array ist und vergleiche mit currentPage
+  // Prüfen, ob der Log-Button angezeigt werden soll
   const showLogButton = Array.isArray(loggablePages) && loggablePages.includes(currentPage);
-  // console.log(`[Footer] CurrentPage: ${currentPage}, LoggablePages:`, loggablePages, `ShowButton: ${showLogButton}`); // Debugging Log
 
   return (
-    <Row style={{ height: '100%', backgroundColor: '#383838' }} align="middle" justify="space-between">
-      {/* Linke Seite: Buttons */}
-      <Col span={8}>
-        <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8 }}>
-          {/* Alarm Button */}
-          <Button type="default" ghost style={firstButtonStyle} onClick={handleCheckClick} aria-label="Alarm Status">
-            {getDynamicIcon()}
-          </Button>
+    // Fragment, damit Popups außerhalb der Row gerendert werden können
+    <>
+        <Row style={{ height: '100%', backgroundColor: '#383838' }} align="middle" justify="space-between">
+          {/* Linke Spalte: Buttons */}
+          <Col span={8} xs={10}> {/* Mehr Platz auf Mobile */}
+            <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8 }}>
+              {/* Alarm Button */}
+              <Button type="default" ghost style={firstButtonStyle} onClick={handleAlarmButtonClick} aria-label="Alarme anzeigen">
+                {getDynamicIcon()}
+              </Button>
 
-          {/* +++ NEU: Bedingte Anzeige des Log-Buttons +++ */}
-          {showLogButton && (
-            <Button type="default" ghost style={buttonStyle} onClick={handleChartClick} aria-label="Show Logs">
-              <LineChartOutlined style={{ fontSize: '32px', color: '#fff' }} />
-            </Button>
-          )}
-          {/* Hier könnten weitere Buttons hin */}
-        </div>
-      </Col>
+              {/* Log Button (bedingt) */}
+              {showLogButton && (
+                <Button type="default" ghost style={buttonStyle} onClick={handleChartClick} aria-label="Logs anzeigen">
+                  <LineChartOutlined style={{ fontSize: '32px', color: '#fff' }} />
+                </Button>
+              )}
+            </div>
+          </Col>
 
-      {/* Mitte: Logo (nur wenn nicht auf Homepage) */}
-      <Col span={8} style={{ textAlign: 'center' }}>
-         {location.pathname !== '/' && ( // Logo nur anzeigen, wenn NICHT auf der Homepage
-             <img
-                 src="/assets/ygnis_white.svg"
-                 alt="Logo"
-                 style={{ cursor: 'pointer', maxHeight: '56px', verticalAlign: 'middle' }} // Höhe leicht reduziert
-                 onClick={handleLogoClick}
-               />
-         )}
-      </Col>
+           {/* Mitte: Logo */}
+          <Col span={8} xs={4} style={{ textAlign: 'center' }}>
+             {location.pathname !== '/' && (
+                 <img src="/assets/ygnis_white.svg" alt="Logo" style={{ cursor: 'pointer', maxHeight: '56px', verticalAlign: 'middle' }} onClick={handleLogoClick} />
+             )}
+           </Col>
 
-      {/* Rechte Seite: Temperatur, Uhrzeit, Datum */}
-      <Col span={8} style={{ textAlign: 'right', paddingRight: 16 }}>
-        <div style={{ fontSize: 18, lineHeight: 1.2, color: '#fff' }}>
-          <Text style={{ fontSize: 18, display: 'block', margin: 0, padding: 0, color: '#fff' }}>
-            {footerData.temperature}°C | {formattedTime}
-          </Text>
-          <Text style={{ fontSize: 18, display: 'block', margin: 0, padding: 0, color: '#fff' }}>
-            {formattedDate}
-          </Text>
-        </div>
-      </Col>
+          {/* Rechte Spalte: Infos */}
+          <Col span={8} xs={10} style={{ textAlign: 'right', paddingRight: 16 }}>
+             <div style={{ fontSize: 18, lineHeight: 1.2, color: '#fff' }}>
+               <Text style={{ fontSize: 18, display: 'block', margin: 0, padding: 0, color: '#fff' }}> {footerData.temperature}°C | {formattedTime} </Text>
+               <Text style={{ fontSize: 18, display: 'block', margin: 0, padding: 0, color: '#fff' }}> {formattedDate} </Text>
+             </div>
+           </Col>
+        </Row>
 
-      {/* Chart Popup (bleibt unverändert, wird nur bei Bedarf angezeigt) */}
-      <ChartPopup
-        visible={chartVisible}
-        onClose={() => setChartVisible(false)}
-        currentPage={currentPage} // currentPage wird für die Datenabfrage im Popup benötigt
-      />
-    </Row>
+        {/* Chart Popup */}
+        <ChartPopup visible={chartVisible} onClose={() => setChartVisible(false)} currentPage={currentPage}/>
+
+        {/* Alarm Popup */}
+        <AlarmsPopup visible={alarmsPopupVisible} onClose={() => setAlarmsPopupVisible(false)} />
+    </>
   );
 };
 
