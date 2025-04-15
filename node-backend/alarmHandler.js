@@ -35,7 +35,6 @@ const ALARM_ACKNOWLEDGE_TOPIC = process.env.MQTT_ALARM_ACK_TOPIC || 'visu/alarm/
 class AlarmHandler {
     // Konstruktor braucht mqttHandler Instanz und mqttClient
     constructor(io, sqliteDB, mqttHandlerInstance, mqttClient) {
-        // Debug Logs entfernt für Übersichtlichkeit
         if (!io || !sqliteDB || !mqttHandlerInstance || typeof mqttHandlerInstance.onMessage !== 'function' || !mqttClient) {
             throw new Error("AlarmHandler requires io, sqliteDB, a valid mqttHandlerInstance with onMessage method, and mqttClient.");
         }
@@ -167,24 +166,65 @@ class AlarmHandler {
         }
     }
 
+    // +++ START DER ÄNDERUNG: logAlarmEvent angepasst +++
     logAlarmEvent = async (definition, status, identifier, rawValue, timestamp) => {
-        console.log(`[AlarmHandler.logAlarmEvent] Logging: DefID=${definition.id}, Status=${status}, Identifier=${identifier}, RawVal=${rawValue}, TS=${timestamp}`);
+        let definitionId = null;
+        let textKey = null;
+        let priority = null;
+        let effectiveIdentifier = identifier; // Variable für den tatsächlichen Identifier
+        let effectiveRawValue = rawValue; // Variable für den tatsächlichen Rohwert
+
+        if (definition) { // Bestehende Logik für spezifische Alarme
+            definitionId = definition.id;
+            textKey = definition.alarm_text_key;
+            priority = definition.priority;
+            // effectiveIdentifier und effectiveRawValue werden aus Parametern übernommen
+            console.log(`[AlarmHandler.logAlarmEvent] Logging Specific Alarm: DefID=${definitionId}, Status=${status}, Identifier=${effectiveIdentifier}, RawVal=${effectiveRawValue}, Prio=${priority}, Key=${textKey}, TS=${timestamp}`);
+        } else if (status === 'reset') { // Neue Logik für Reset
+            definitionId = null; // Keine spezifische Definition
+            effectiveIdentifier = identifier || 'USER_ACTION'; // Verwende übergebenen oder Standard-Identifier
+            effectiveRawValue = rawValue === undefined ? null : rawValue; // Erlaube explizites null
+            textKey = 'ALARM_RESET_ACTION'; // Definiere einen Schlüssel für die Übersetzung
+            priority = 'info'; // Weise eine Priorität zu (z.B., 'info')
+            console.log(`[AlarmHandler.logAlarmEvent] Logging RESET action: Identifier=${effectiveIdentifier}, Prio=${priority}, Key=${textKey}, TS=${timestamp}`);
+        } else {
+             console.error(`[AlarmHandler.logAlarmEvent] Invalid call: status is '${status}' but no definition provided.`);
+             return; // Oder wirf einen Fehler
+        }
+
         try {
-            const sql = `INSERT INTO alarm_history (definition_id, status, mqtt_topic, raw_value, timestamp) VALUES (?, ?, ?, ?, ?)`;
-            const result = await runDbQuery(this.sqliteDB, sql, [definition.id, status, identifier, rawValue, timestamp], 'run');
+            // SQL angepasst, um priority und alarm_text_key einzufügen
+            const sql = `INSERT INTO alarm_history (definition_id, status, mqtt_topic, raw_value, timestamp, priority, alarm_text_key) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+            const result = await runDbQuery(
+                this.sqliteDB,
+                sql,
+                [definitionId, status, effectiveIdentifier, effectiveRawValue, timestamp, priority, textKey],
+                'run'
+            );
             console.log(`[AlarmHandler.logAlarmEvent] DB Insert successful, new history ID: ${result.lastID}`);
-            const newHistoryEntry = { id: result.lastID, definition_id: definition.id, status: status, mqtt_topic: identifier, raw_value: rawValue, timestamp: timestamp, alarm_text_key: definition.alarm_text_key, priority: definition.priority };
+
+            // Broadcast den neuen Eintrag (mit priority und textKey)
+            const newHistoryEntry = {
+                id: result.lastID,
+                definition_id: definitionId,
+                status: status,
+                mqtt_topic: effectiveIdentifier, // Verwende effectiveIdentifier
+                raw_value: effectiveRawValue,     // Verwende effectiveRawValue
+                timestamp: timestamp,
+                alarm_text_key: textKey,
+                priority: priority
+            };
             this.io.emit('alarm-history-entry', newHistoryEntry);
         } catch (error) {
-            console.error(`[AlarmHandler] Error logging alarm event for DefID ${definition.id}:`, error);
+            console.error(`[AlarmHandler] Error logging alarm event (Status: ${status}, DefID: ${definitionId}, Topic: ${effectiveIdentifier}):`, error);
         }
     }
+    // +++ ENDE DER ÄNDERUNG +++
 
     broadcastCurrentAlarms = () => {
          const activeAlarmsArray = Array.from(this.currentActiveAlarms.values());
          const prioMap = { 'prio1': 5, 'prio2': 4, 'prio3': 3, 'warning': 2, 'info': 1 };
           activeAlarmsArray.sort((a, b) => { const prioA = prioMap[a.definition?.priority] || 0; const prioB = prioMap[b.definition?.priority] || 0; if (prioB !== prioA) return prioB - prioA; return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(); });
-         // console.log(`[AlarmHandler] Broadcasting 'alarms-update' with ${activeAlarmsArray.length} items.`);
          this.io.emit('alarms-update', activeAlarmsArray);
     }
 
@@ -195,7 +235,6 @@ class AlarmHandler {
          if (highestPrioValue >= 3) footerAlarmValue = 3; else if (highestPrioValue === 2) footerAlarmValue = 2;
          this.currentFooterAlarmValue = footerAlarmValue;
          if (global.io) {
-             // console.log(`[AlarmHandler] Broadcasting 'footer-update' with alarmButton: ${this.currentFooterAlarmValue}`);
              global.io.emit('footer-update', { alarmButton: this.currentFooterAlarmValue });
          }
      }
@@ -275,33 +314,44 @@ class AlarmHandler {
                  const limit = Math.max(1, Math.min(options.limit || 50, 200));
                  const offset = Math.max(0, options.offset || 0);
                  try {
-                     const history = await runDbQuery(this.sqliteDB, `SELECT h.id, h.timestamp, h.status, h.mqtt_topic, h.raw_value, d.id as definition_id, d.alarm_text_key, d.priority FROM alarm_history h LEFT JOIN alarm_definitions d ON h.definition_id = d.id ORDER BY h.timestamp DESC LIMIT ? OFFSET ?`, [limit, offset]);
+                     // +++ GEÄNDERT: Priority und Text Key direkt aus History holen +++
+                     const history = await runDbQuery(this.sqliteDB, `SELECT h.id, h.timestamp, h.status, h.mqtt_topic, h.raw_value, h.definition_id, h.alarm_text_key, h.priority FROM alarm_history h ORDER BY h.timestamp DESC LIMIT ? OFFSET ?`, [limit, offset]);
                      const totalCountResult = await runDbQuery(this.sqliteDB, `SELECT COUNT(*) as count FROM alarm_history`, [], 'get');
                      const totalCount = totalCountResult?.count || 0;
-                     // console.log(`[AlarmHandler] Sending 'alarm-history-update' with ${history?.length || 0} items, total ${totalCount}.`);
                      socket.emit('alarm-history-update', { history: history || [], total: totalCount, limit: limit, offset: offset });
                  } catch (error) { console.error('[AlarmHandler] Error fetching alarm history:', error); socket.emit('alarm-history-error', { message: `Fehler beim Laden der Alarmhistorie: ${error.message}` }); }
             });
 
-            // Listener für Alarm-Quittierung vom Frontend
+            // +++ START DER ÄNDERUNG: Listener für Alarm-Quittierung angepasst +++
             socket.on('acknowledge-alarms', (data) => {
                  console.log(`[AlarmHandler] Received 'acknowledge-alarms' from ${socket.id}. Data:`, data);
-                 if (!this.mqttClient || !this.mqttClient.connected) { console.error("[AlarmHandler] Cannot acknowledge alarms: MQTT client not connected."); return; } // Optional: Fehler an Client?
+                 if (!this.mqttClient || !this.mqttClient.connected) {
+                     console.error("[AlarmHandler] Cannot acknowledge alarms: MQTT client not connected.");
+                     // Optional: Fehler an den Client zurücksenden
+                     // socket.emit('alarm-ack-error', { message: 'MQTT client not connected.' });
+                     return;
+                 }
 
-                 // +++ GEÄNDERT: Sende nur "true" als String +++
-                 const payload = "true";
+                 const payload = "true"; // Sende immer "true" für Reset an MQTT
                  const options = { qos: 1, retain: false };
 
+                 // An MQTT senden
                  this.mqttClient.publish(ALARM_ACKNOWLEDGE_TOPIC, payload, options, (error) => {
                      if (error) {
                          console.error(`[AlarmHandler] Failed to publish acknowledge message to ${ALARM_ACKNOWLEDGE_TOPIC}:`, error);
-                         // Kein Feedback mehr an Client senden
                      } else {
                          console.log(`[AlarmHandler] Successfully published acknowledge message ('${payload}') to ${ALARM_ACKNOWLEDGE_TOPIC}`);
-                         // Kein Feedback mehr an Client senden
                      }
                  });
+
+                 // History-Eintrag für Reset hinzufügen
+                 const resetTimestamp = data?.timestamp || new Date().toISOString();
+                 // Rufe logAlarmEvent auf, um den Reset zu protokollieren
+                 // Parameter: (definition=null, status='reset', identifier='USER_ACTION', rawValue=null, timestamp)
+                 this.logAlarmEvent(null, 'reset', 'USER_ACTION', null, resetTimestamp);
+
             }); // Ende acknowledge-alarms Listener
+            // +++ ENDE DER ÄNDERUNG +++
 
         }); // Ende io.on('connection')
     } // Ende setupSocketHandlers

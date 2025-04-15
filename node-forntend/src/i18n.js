@@ -33,6 +33,7 @@ const resources = {
       Range:"Bereich",
       from:"von",
       to:"bis",
+      ALARM_RESET_ACTION:"RESET"
     }
   },
   en: {
@@ -65,6 +66,7 @@ const resources = {
       Range:"Range",
       from:"from",
       to:"to",
+      ALARM_RESET_ACTION:"RESET"
     }
   },
   fr: {
@@ -96,6 +98,7 @@ const resources = {
       Range:"Secteur",
       from:"de",
       to:"à",
+      ALARM_RESET_ACTION:"RESET"
     }
   },
   it: {
@@ -127,6 +130,7 @@ const resources = {
       Range:"Settore",
       from:"da",
       to:"a",
+      ALARM_RESET_ACTION:"RESET"
     }
   }
 };

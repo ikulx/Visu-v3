@@ -71,9 +71,26 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
             await runSql(`CREATE TABLE IF NOT EXISTS "rule_actions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "rule_id" INTEGER NOT NULL, "target_variable_name" TEXT NOT NULL, "action_type" TEXT NOT NULL DEFAULT 'set_visibility', "target_value" TEXT NOT NULL, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("rule_id") REFERENCES "rules" ("id") ON DELETE CASCADE)`, 'Create rule_actions table');
             await runSql(`CREATE TABLE IF NOT EXISTS "alarm_configs" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "mqtt_topic" TEXT UNIQUE NOT NULL, "description" TEXT, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, 'Create alarm_configs table');
             await runSql(`CREATE TABLE IF NOT EXISTS "alarm_definitions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "config_id" INTEGER NOT NULL, "bit_number" INTEGER NOT NULL CHECK(bit_number >= 0 AND bit_number <= 15), "alarm_text_key" TEXT NOT NULL, "priority" TEXT NOT NULL CHECK(priority IN ('prio1', 'prio2', 'prio3', 'warning', 'info')), "enabled" BOOLEAN DEFAULT 1, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("config_id") REFERENCES "alarm_configs" ("id") ON DELETE CASCADE, UNIQUE ("config_id", "bit_number"))`, 'Create alarm_definitions table');
-            await runSql(`CREATE TABLE IF NOT EXISTS "alarm_history" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "definition_id" INTEGER NOT NULL, "timestamp" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "status" TEXT NOT NULL CHECK(status IN ('active', 'inactive')), "mqtt_topic" TEXT, "raw_value" INTEGER, FOREIGN KEY ("definition_id") REFERENCES "alarm_definitions" ("id") ON DELETE CASCADE)`, 'Create alarm_history table');
+
+            // +++ START DER ÄNDERUNG +++
+            await runSql(`
+                CREATE TABLE IF NOT EXISTS "alarm_history" (
+                    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+                    "definition_id" INTEGER NULLABLE, -- Kann NULL sein für Reset
+                    "timestamp" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    "status" TEXT NOT NULL CHECK(status IN ('active', 'inactive', 'reset')), -- 'reset' hinzugefügt
+                    "mqtt_topic" TEXT,
+                    "raw_value" INTEGER,
+                    "priority" TEXT, -- Hinzugefügt für Info
+                    "alarm_text_key" TEXT, -- Hinzugefügt für Info
+                    FOREIGN KEY ("definition_id") REFERENCES "alarm_definitions" ("id") ON DELETE SET NULL -- Geändert zu SET NULL
+                )
+            `, 'Create alarm_history table (modified)');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_ts ON alarm_history (timestamp DESC);`, 'Create index on alarm_history timestamp');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_def ON alarm_history (definition_id);`, 'Create index on alarm_history definitions');
+            console.log("Alarm History Tabelle (modifiziert) erfolgreich erstellt oder existiert bereits.");
+            // +++ ENDE DER ÄNDERUNG +++
+
 
             console.log("Alle Tabellen (inkl. Alarm) erfolgreich erstellt oder existieren bereits.");
 
@@ -109,8 +126,6 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
                       console.error("FEHLER: MQTT Handler oder MQTT Client konnte nicht initialisiert werden.");
                       throw new Error("MQTT Handler/Client Initialization failed.");
                  }
-                 // console.log("MQTT Handler Instance Type:", typeof mqttHandlerInstance, "Has onMessage Method:", typeof mqttHandlerInstance?.onMessage === 'function'); // Weniger verbose
-
 
                 console.log("Initializing Logging Handler...");
                 setupLogging(io, sqliteDB, mqttHandlerInstance);
@@ -119,12 +134,6 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
                 setupRulesHandlers(io, sqliteDB);
 
                 console.log("Initializing Alarm Handler...");
-                // console.log('--- DEBUG: Checking mqttHandlerInstance before setupAlarmHandler ---'); // Entfernt
-                // console.log('Type:', typeof mqttHandlerInstance);
-                // try { console.log('Has onMessage property:', mqttHandlerInstance.hasOwnProperty('onMessage')); console.log('mqttHandlerInstance.onMessage type:', typeof mqttHandlerInstance.onMessage); } catch (e) { console.log('Error accessing mqttHandlerInstance.onMessage:', e.message); }
-                // console.log('Instance Keys:', mqttHandlerInstance ? Object.keys(mqttHandlerInstance) : 'N/A');
-                // console.log('-----------------------------------------------------------------');
-
                 // Rufe setupAlarmHandler mit Instanz und Client auf
                 setupAlarmHandler(io, sqliteDB, mqttHandlerInstance, mqttHandlerInstance.mqttClient);
 
