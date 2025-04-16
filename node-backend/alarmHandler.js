@@ -2,18 +2,35 @@
 const sqlite3 = require('sqlite3');
 const MQTT_TOPICS = require('./mqttConfig'); // Import der zentralen Topics
 
-// DB Query Hilfsfunktion (unverändert)
+// DB Query Hilfsfunktion
 function runDbQuery(sqliteDB, sql, params = [], method = 'all') {
     return new Promise((resolve, reject) => {
         if (!sqliteDB) return reject(new Error("Database instance is not provided."));
         if (!['all', 'get', 'run'].includes(method)) return reject(new Error(`Invalid DB method: ${method}`));
-        const callback = function (err, result) {
-            if (err) { console.error(`[DB ${method.toUpperCase()}] Error: ${sql}`, params, err); reject(err); }
-            else { if (method === 'run') resolve({ lastID: this.lastID, changes: this.changes }); else resolve(result); }
+
+        const callback = function (err, result) { // 'function' für 'this' bei 'run'
+            if (err) {
+                console.error(`[DB ${method.toUpperCase()}] Error: ${sql}`, params, err);
+                reject(err);
+            } else {
+                if (method === 'run') {
+                    resolve({ lastID: this.lastID, changes: this.changes });
+                } else {
+                    resolve(result);
+                }
+            }
         };
-        if (method === 'run') sqliteDB.run(sql, params, callback); else sqliteDB[method](sql, params, callback);
+
+        if (method === 'run') {
+            sqliteDB.run(sql, params, callback);
+        } else {
+            sqliteDB[method](sql, params, callback);
+        }
     });
 }
+
+// Konstante für den DB-Schlüssel der Einstellung
+const MQTT_NOTIFICATION_SETTING_KEY = 'mqtt_new_alarm_notifications_enabled';
 
 class AlarmHandler {
     constructor(io, sqliteDB, mqttHandlerInstance, mqttClient) {
@@ -24,26 +41,52 @@ class AlarmHandler {
         this.sqliteDB = sqliteDB;
         this.mqttHandler = mqttHandlerInstance;
         this.mqttClient = mqttClient;
+
+        // Interne Zustände
         this.alarmConfigs = new Map();
         this.lastValues = new Map();
         this.currentActiveAlarms = new Map();
         this.currentFooterAlarmValue = 1;
+        this.isMqttNotificationEnabled = true; // Standardwert, wird beim Initialisieren geladen
+
         this.initialize();
     }
 
     initialize = async () => {
         console.log("[AlarmHandler] Initializing...");
         try {
-            await this.loadConfig();
-            this.registerMqttListener();
-            this.setupSocketHandlers();
+            // Lade die Einstellung zuerst, damit sie beim ersten Verarbeiten von Alarmen korrekt ist
+            await this.loadMqttNotificationSetting();
+            await this.loadConfig(); // Lade Alarmkonfiguration
+            this.registerMqttListener(); // Registriere Listener für eingehende Daten
+            this.setupSocketHandlers(); // Richte Socket.IO Handler ein
             console.log("[AlarmHandler] Initialized.");
         } catch (error) {
              console.error("[AlarmHandler] Initialization failed:", error);
         }
     }
 
+    // Lädt die Einstellung aus der Datenbank
+    loadMqttNotificationSetting = async () => {
+        try {
+            const settingRow = await runDbQuery(this.sqliteDB,
+                'SELECT value FROM global_settings WHERE key = ?',
+                [MQTT_NOTIFICATION_SETTING_KEY],
+                'get' // Erwarte maximal einen Eintrag
+            );
+            // Wert aus DB lesen ('true' oder 'false' als String), Standard ist true
+            this.isMqttNotificationEnabled = !(settingRow && settingRow.value === 'false');
+            console.log(`[AlarmHandler] MQTT New Alarm Notifications Status loaded: ${this.isMqttNotificationEnabled}`);
+        } catch (error) {
+            console.error("[AlarmHandler] Error loading MQTT notification setting:", error);
+            // Fallback auf den Standardwert, falls DB-Lesen fehlschlägt
+            this.isMqttNotificationEnabled = true;
+            console.warn("[AlarmHandler] Falling back to default MQTT notification status (enabled).");
+        }
+    }
+
     registerMqttListener = () => {
+        // Hört auf ALLE Nachrichten, die der mqttHandler empfängt
         this.mqttHandler.onMessage(this.processAlarmData);
         console.log("[AlarmHandler] Registered callback with MQTT handler.");
     }
@@ -57,15 +100,17 @@ class AlarmHandler {
             const configs = await runDbQuery(this.sqliteDB, 'SELECT * FROM alarm_configs');
             for (const config of configs) {
                  const identifier = config.mqtt_topic;
-                 if (!identifier) continue;
+                 if (!identifier) continue; // Identifier muss vorhanden sein
                  const definitionsRaw = await runDbQuery( this.sqliteDB, 'SELECT * FROM alarm_definitions WHERE config_id = ? AND enabled = 1', [config.id] );
                  const definitionsMap = new Map();
                  definitionsRaw.forEach(def => { definitionsMap.set(def.bit_number, def); });
                  if (definitionsMap.size > 0) {
                     newConfig.set(identifier, { config: config, definitions: definitionsMap });
-                    newLastValues.set(identifier, this.lastValues.get(identifier) || null);
+                    newLastValues.set(identifier, this.lastValues.get(identifier) || null); // Vorhandenen Wert behalten oder null
                     identifiers.add(identifier);
-                 } else { newLastValues.delete(identifier); }
+                 } else {
+                    newLastValues.delete(identifier); // Wert löschen, wenn keine Defs mehr da sind
+                 }
             }
              this.alarmConfigs = newConfig;
              this.lastValues = newLastValues;
@@ -106,7 +151,7 @@ class AlarmHandler {
         });
         if (changed) {
              console.log("[AlarmHandler] Active alarms re-evaluated.");
-             this.broadcastCurrentAlarms(); // Sendet NUR noch an Socket.IO
+             this.broadcastCurrentAlarms(); // Sendet an Socket.IO
         }
      }
 
@@ -137,20 +182,29 @@ class AlarmHandler {
             if (newBitStatus && !previousBitStatus) { // --- Alarm WIRD AKTIV ---
                 console.log(`[AlarmHandler] ---> ALARM ACTIVE: Identifier=${identifier}, Bit=${bit}, DefID=${definition.id}, TextKey=${definition.alarm_text_key}`);
 
-                // +++ MQTT-Nachricht für NEUEN Alarm senden +++
-                const newAlarmTopic = MQTT_TOPICS.OUTGOING_NEW_ALARM_EVENT;
-                const newAlarmPayload = JSON.stringify({
-                    definitionId: definition.id, timestamp: now, status: 'active',
-                    identifier: identifier, bitNumber: bit, rawValue: newValueInt,
-                    alarmTextKey: definition.alarm_text_key, priority: definition.priority
-                });
-                if (this.mqttClient && this.mqttClient.connected) {
-                    this.mqttClient.publish(newAlarmTopic, newAlarmPayload, { qos: 1, retain: false }, (error) => {
-                        if (error) console.error(`[AlarmHandler] Fehler Senden (NEUER Alarm) an MQTT ${newAlarmTopic}:`, error);
-                        else console.log(`[AlarmHandler] Neuer Alarm (DefID ${definition.id}) an MQTT ${newAlarmTopic} gesendet.`);
+                // Prüfe, ob MQTT-Notifications aktiviert sind
+                if (this.isMqttNotificationEnabled) {
+                    const newAlarmTopic = MQTT_TOPICS.OUTGOING_NEW_ALARM_EVENT;
+                    const newAlarmPayload = JSON.stringify({
+                        definitionId: definition.id,
+                        timestamp: now,
+                        status: 'active',
+                        identifier: identifier,
+                        bitNumber: bit,
+                        rawValue: newValueInt,
+                        alarmTextKey: definition.alarm_text_key,
+                        priority: definition.priority
                     });
-                } else console.warn(`[AlarmHandler] MQTT nicht verbunden. Neuer Alarm (DefID ${definition.id}) nicht an ${newAlarmTopic} gesendet.`);
-                // +++ ENDE MQTT +++
+
+                    if (this.mqttClient && this.mqttClient.connected) {
+                        this.mqttClient.publish(newAlarmTopic, newAlarmPayload, { qos: 1, retain: false }, (error) => {
+                            if (error) console.error(`[AlarmHandler] Fehler Senden (NEUER Alarm) an MQTT ${newAlarmTopic}:`, error);
+                            else console.log(`[AlarmHandler] Neuer Alarm (DefID ${definition.id}) an MQTT ${newAlarmTopic} gesendet.`);
+                        });
+                    } else console.warn(`[AlarmHandler] MQTT nicht verbunden. Neuer Alarm (DefID ${definition.id}) nicht an ${newAlarmTopic} gesendet.`);
+                } else {
+                    console.log(`[AlarmHandler] MQTT Notification für neuen Alarm (DefID ${definition.id}) ist deaktiviert.`);
+                }
 
                 this.logAlarmEvent(definition, 'active', identifier, newValueInt, now);
                 this.currentActiveAlarms.set(definition.id, { definition, timestamp: now });
@@ -163,10 +217,11 @@ class AlarmHandler {
                 activeAlarmsChanged = true;
             }
         }
+
         this.lastValues.set(identifier, newValueInt);
         if (activeAlarmsChanged) {
-            console.log(`[AlarmHandler.processAlarmData] Alarm status changed for ${identifier}. Broadcasting updates.`);
-            this.broadcastCurrentAlarms(); // Sendet NUR noch an Socket.IO
+            console.log(`[AlarmHandler.processAlarmData] Alarm status changed. Broadcasting updates.`);
+            this.broadcastCurrentAlarms(); // Sendet NUR an Socket.IO
             this.updateFooterAlarmStatus();
         }
     }
@@ -194,7 +249,6 @@ class AlarmHandler {
         } catch (error) { console.error(`[AlarmHandler] Error logging alarm event:`, error); }
     }
 
-    // --- GEÄNDERT: Sendet nur noch an Socket.IO ---
     broadcastCurrentAlarms = () => {
          const activeAlarmsArray = Array.from(this.currentActiveAlarms.values());
          const prioMap = { 'prio1': 5, 'prio2': 4, 'prio3': 3, 'warning': 2, 'info': 1 };
@@ -204,14 +258,10 @@ class AlarmHandler {
                 if (prioB !== prioA) return prioB - prioA;
                 return new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime();
           });
-
          // Nur noch an Socket.IO senden
          this.io.emit('alarms-update', activeAlarmsArray);
-         console.log(`[AlarmHandler] Broadcasted 'alarms-update' to ${this.io.sockets.sockets.size} clients.`);
-
-         // --- MQTT Broadcast für visu/alarm/data wurde entfernt ---
+         // console.log(`[AlarmHandler] Broadcasted 'alarms-update' to ${this.io.sockets.sockets.size} clients.`);
     }
-    // --- ENDE ÄNDERUNG ---
 
     updateFooterAlarmStatus = () => {
          let highestPrioValue = 0;
@@ -223,7 +273,6 @@ class AlarmHandler {
          let footerAlarmValue = 1;
          if (highestPrioValue >= 3) footerAlarmValue = 3;
          else if (highestPrioValue === 2) footerAlarmValue = 2;
-
          if (this.currentFooterAlarmValue !== footerAlarmValue) {
              this.currentFooterAlarmValue = footerAlarmValue;
              if (global.io) {
@@ -234,26 +283,30 @@ class AlarmHandler {
 
     setupSocketHandlers = () => {
         this.io.on('connection', (socket) => {
-            // console.log(`[AlarmHandler] Client ${socket.id} connected, sending initial state.`);
+            console.log(`[AlarmHandler] Client ${socket.id} connected.`);
+            // Initialen Status senden
             const currentActiveAlarmsArray = Array.from(this.currentActiveAlarms.values());
             const prioMap = { 'prio1': 5, 'prio2': 4, 'prio3': 3, 'warning': 2, 'info': 1 };
-            currentActiveAlarmsArray.sort((a, b) => { /* ... */ });
+            currentActiveAlarmsArray.sort((a, b) => { const prioA = prioMap[a.definition?.priority] || 0; const prioB = prioMap[b.definition?.priority] || 0; if (prioB !== prioA) return prioB - prioA; return new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime(); });
             socket.emit('alarms-update', currentActiveAlarmsArray);
             socket.emit('footer-update', { alarmButton: this.currentFooterAlarmValue });
+            socket.emit('mqtt-notification-status-update', { enabled: this.isMqttNotificationEnabled }); // Initialen Status senden
 
+            // Bestehende Listener
             socket.on('request-current-alarms', () => {
                  const activeAlarmsArray = Array.from(this.currentActiveAlarms.values());
-                 /* ... sort ... */
+                 const prioMap = { 'prio1': 5, 'prio2': 4, 'prio3': 3, 'warning': 2, 'info': 1 };
+                 activeAlarmsArray.sort((a, b) => { const prioA = prioMap[a.definition?.priority] || 0; const prioB = prioMap[b.definition?.priority] || 0; if (prioB !== prioA) return prioB - prioA; return new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime(); });
                  socket.emit('alarms-update', activeAlarmsArray);
             });
             socket.on('request-alarm-configs', async () => {
-                 try { const configs = await this.getConfigsForClient(); socket.emit('alarm-configs-update', configs); }
-                 catch (error) { socket.emit('alarm-configs-error', { message: 'Fehler Laden Konfig.' }); }
+                try { const configs = await this.getConfigsForClient(); socket.emit('alarm-configs-update', configs); }
+                catch (error) { socket.emit('alarm-configs-error', { message: 'Fehler Laden Konfig.' }); }
             });
             socket.on('update-alarm-configs', async (data) => {
                 if (!Array.isArray(data)) return socket.emit('alarm-configs-error', { message: 'Ungültiges Format.' });
                 try {
-                    await new Promise((resolve, reject) => { /* ... DB Transaction Logic ... */ });
+                    await new Promise((resolve, reject) => { this.sqliteDB.run('BEGIN TRANSACTION', async (beginErr) => { /* ... DB Transaction Logic ... */ }); });
                     await this.loadConfig();
                     const newConfigs = await this.getConfigsForClient();
                     this.io.emit('alarm-configs-update', newConfigs);
@@ -269,21 +322,44 @@ class AlarmHandler {
                      socket.emit('alarm-history-update', { history: history || [], total: totalCountResult?.count || 0, limit: limit, offset: offset });
                  } catch (error) { socket.emit('alarm-history-error', { message: `Fehler Laden Historie: ${error.message}` }); }
             });
-
-            // Listener für Alarm-Quittierung (Reset) vom Frontend (unverändert)
             socket.on('acknowledge-alarms', (data) => {
-                 if (!this.mqttClient || !this.mqttClient.connected) { /* ... */ return; }
+                 if (!this.mqttClient || !this.mqttClient.connected) { return; }
                  const targetTopic = MQTT_TOPICS.OUTGOING_ALARM_ACK_REQUEST;
-                 const payload = "true";
-                 const options = { qos: 1, retain: false };
-                 this.mqttClient.publish(targetTopic, payload, options, (error) => { /* ... */ });
+                 this.mqttClient.publish(targetTopic, "true", { qos: 1, retain: false }, (error) => { if(error) console.error(`Fehler publish an ${targetTopic}:`, error); else console.log(`Reset request publiziert an ${targetTopic}`); });
                  this.logAlarmEvent(null, 'reset', 'USER_ACTION', null, data?.timestamp || new Date().toISOString());
             });
 
+            // --- NEUE Listener für MQTT Notification Status ---
+            socket.on('request-mqtt-notification-status', () => {
+                socket.emit('mqtt-notification-status-update', { enabled: this.isMqttNotificationEnabled });
+            });
+
+            socket.on('set-mqtt-notification-status', async (data) => {
+                if (typeof data?.enabled !== 'boolean') { return; }
+                const newState = data.enabled;
+                const newStateString = newState ? 'true' : 'false';
+                console.log(`[AlarmHandler] Client ${socket.id} setzt MQTT notification status auf: ${newState}`);
+                try {
+                    // Einstellung in DB speichern (UPSERT)
+                    await runDbQuery(this.sqliteDB,
+                        `INSERT INTO global_settings (key, value) VALUES (?, ?)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+                        [MQTT_NOTIFICATION_SETTING_KEY, newStateString],
+                        'run'
+                    );
+                    // Internen Zustand aktualisieren
+                    this.isMqttNotificationEnabled = newState;
+                    // Neuen Status an ALLE Clients broadcasten
+                    this.io.emit('mqtt-notification-status-update', { enabled: this.isMqttNotificationEnabled });
+                    console.log(`[AlarmHandler] MQTT notification status auf ${newState} gesetzt und broadcastet.`);
+                } catch (error) {
+                    console.error(`[AlarmHandler] Fehler beim Speichern/Broadcasten des MQTT notification status:`, error);
+                }
+            });
+            // --- Ende Neue Listener ---
         });
     }
 
-    // Helfer zum Holen der Config für Client (unverändert)
     getConfigsForClient = async () => {
          const configs = await runDbQuery(this.sqliteDB, 'SELECT * FROM alarm_configs ORDER BY mqtt_topic ASC');
          const definitions = await runDbQuery(this.sqliteDB, 'SELECT * FROM alarm_definitions ORDER BY config_id ASC, bit_number ASC');
@@ -296,10 +372,9 @@ class AlarmHandler {
          });
          return Array.from(configMap.values());
      }
-
 } // Ende Klasse AlarmHandler
 
-// Singleton Instanz und Setup Funktion (unverändert)
+// Singleton Instanz und Setup Funktion
 let alarmHandlerInstance = null;
 function setupAlarmHandler(io, sqliteDB, mqttHandlerInstance, mqttClient) {
     if (!alarmHandlerInstance) {
@@ -307,5 +382,4 @@ function setupAlarmHandler(io, sqliteDB, mqttHandlerInstance, mqttClient) {
     }
     return alarmHandlerInstance;
 }
-
 module.exports = { setupAlarmHandler };

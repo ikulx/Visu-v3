@@ -6,8 +6,8 @@ import FooterComponent from './FooterComponent';
 
 const { Header, Content, Footer } = Layout;
 
-// +++ NEU: loggablePages als Prop hinzufügen +++
-const MainLayout = ({ menuItems, children, loggablePages }) => {
+// Empfängt jetzt onAlarmButtonClick und mqttNotificationsEnabled
+const MainLayout = ({ menuItems, children, loggablePages, onAlarmButtonClick, mqttNotificationsEnabled }) => {
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       {/* Header bleibt unverändert */}
@@ -18,10 +18,13 @@ const MainLayout = ({ menuItems, children, loggablePages }) => {
       <Content style={{ padding: 0, overflow: 'hidden', flex: 1 }}>
         {children}
       </Content>
-      {/* Footer empfängt jetzt loggablePages */}
+      {/* Footer empfängt jetzt die neuen Props */}
       <Footer style={{ padding: 0, height: '64px' }}>
-        {/* +++ NEU: loggablePages an FooterComponent weitergeben +++ */}
-        <FooterComponent loggablePages={loggablePages} />
+        <FooterComponent
+            loggablePages={loggablePages}
+            onAlarmButtonClick={onAlarmButtonClick} // Weitergeben an Footer
+            mqttNotificationsEnabled={mqttNotificationsEnabled} // Weitergeben an Footer
+        />
       </Footer>
     </Layout>
   );

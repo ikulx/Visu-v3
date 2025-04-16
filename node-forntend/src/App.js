@@ -1,17 +1,18 @@
 // src/App.js
 import React, { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Spin, Modal, Button } from 'antd';
+import { Spin, Modal, Button, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import socket from './socket';
 import MainLayout from './Layout/MainLayout';
 import 'antd/dist/reset.css';
 import { produce } from 'immer';
 import { UserProvider } from './UserContext';
+// Importiere AlarmsPopup direkt, da es jetzt Props empfängt
+import AlarmsPopup from './Layout/AlarmsPopup';
 
-// Lazy Loading für Komponenten
+// Lazy Loading für Page
 const LazyPage = React.lazy(() => import('./Page'));
-// const LazySettingsPage = React.lazy(() => import('./SettingsPage')); // Falls benötigt
 
 // Hilfsfunktion zum Abflachen der Menüstruktur für Routing
 const flattenMenuItems = (items) => {
@@ -38,33 +39,33 @@ const updateMenuPropertyImmer = (items, link, propKey, value) => {
           if (propKey === 'label') {
               // Unterscheidung, ob Label ein Objekt oder String ist
               if (typeof item.label === 'object' && item.label !== null) {
-                  item.label.value = value; // Nur den Wert im Objekt ändern
-              } else {
-                  item.label = value; // Einfachen String überschreiben
+                  if (item.label.value !== value) { // Nur ändern, wenn Wert neu
+                     item.label.value = value;
+                     updated = true;
+                  }
+              } else if (item.label !== value) { // Nur ändern, wenn Wert neu
+                  item.label = value;
+                  updated = true;
               }
-              updated = true;
           } else if (item.properties) {
               // Nur aktualisieren, wenn sich der Wert tatsächlich ändert
-              if (item.properties[propKey] !== value) {
+              // oder wenn die Property noch nicht existiert
+              if (!item.properties.hasOwnProperty(propKey) || item.properties[propKey] !== value) {
+                   if (!item.properties) item.properties = {}; // Initialisieren falls nicht vorhanden
                    item.properties[propKey] = value;
                    updated = true;
               }
           }
-          // Optional: break; wenn Links eindeutig sind und Performance wichtig ist
-          // break;
       }
 
       // Rekursiv in Untermenüs suchen
-      if (item.sub) {
-         // Wenn im Sub-Baum aktualisiert wurde, muss nicht weiter gesucht werden
-         if (updateMenuPropertyImmer(item.sub, link, propKey, value)) {
-             updated = true;
-             // Optional: break;
-         }
+      if (item.sub && updateMenuPropertyImmer(item.sub, link, propKey, value)) {
+         updated = true;
       }
     }
     return updated; // Gibt zurück, ob etwas geändert wurde
 };
+
 
 function App() {
   const { t } = useTranslation();
@@ -72,41 +73,62 @@ function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [connectionError, setConnectionError] = useState(null);
   const [isInitialMenuLoaded, setIsInitialMenuLoaded] = useState(false);
-  // State für logbare Seiten (wird von loggingHandler befüllt)
   const [loggablePages, setLoggablePages] = useState([]);
+  // Zustand für MQTT Notification Status (jetzt hier global)
+  const [mqttNotificationsEnabled, setMqttNotificationsEnabled] = useState(true); // Default-Annahme
 
-  // Handler für MQTT Property Updates mit Immer und useCallback
+  // Handler für MQTT Property Updates mit Immer
   const handleMqttPropertyUpdate = useCallback((updates) => {
+    // console.log("Received mqtt-property-update:", updates); // Debug Log
     setMenuData(
       produce((draft) => {
-        if (!draft || !draft.menuItems) return;
-        // Iteriere durch alle empfangenen Updates
+        if (!draft || !draft.menuItems) {
+           console.warn("Draft or draft.menuItems is undefined in handleMqttPropertyUpdate");
+           return;
+        }
+        let changed = false;
         for (const [key, value] of Object.entries(updates)) {
-          const dotIndex = key.lastIndexOf('.'); // Finde letzten Punkt (trennt link von property)
-          if (dotIndex === -1) continue; // Überspringe, wenn kein Punkt gefunden wurde
+          const dotIndex = key.lastIndexOf('.');
+          if (dotIndex === -1) continue;
           const link = key.substring(0, dotIndex);
           const propKey = key.substring(dotIndex + 1);
-          // Rufe die rekursive Update-Funktion auf
-          updateMenuPropertyImmer(draft.menuItems, link, propKey, value);
+          if (updateMenuPropertyImmer(draft.menuItems, link, propKey, value)) {
+              changed = true;
+          }
         }
+        // Wenn keine Änderungen durch updateMenuPropertyImmer stattfanden,
+        // gibt produce den originalen State zurück, was unnötige Re-Renders verhindert.
+        // console.log("Menu update changed state:", changed); // Debug Log
       })
     );
-  }, []); // Keine Abhängigkeiten, da produce verwendet wird
+  }, []); // Keine Abhängigkeiten nötig wegen Immer
 
   // Handle vollständige Menü-Updates
    const handleMenuUpdate = useCallback((data) => {
-        console.log('Full menu update received:', data ? 'Data received' : 'No data');
+        console.log('Full menu update received:', data ? `(${data?.menuItems?.length} items)` : 'No data');
         if (data && Array.isArray(data.menuItems)) {
-             setMenuData(data); // Setze die neuen Menüdaten
+             setMenuData(data);
              if (!isInitialMenuLoaded) {
-                setIsInitialMenuLoaded(true); // Markiere, dass das Menü geladen wurde
+                setIsInitialMenuLoaded(true);
              }
         } else {
             console.warn("Ungültiges Menü-Update-Format empfangen.");
-            setMenuData({ menuItems: [] }); // Setze leeres Menü bei ungültigen Daten
+            setMenuData({ menuItems: [] });
             setIsInitialMenuLoaded(true); // Verhindere endloses Laden
         }
-   }, [isInitialMenuLoaded]); // Abhängigkeit von isInitialMenuLoaded
+   }, [isInitialMenuLoaded]);
+
+   // Handler zum Umschalten des MQTT Status (wird an Popup übergeben)
+   const handleToggleMqttNotifications = useCallback(() => {
+       const newState = !mqttNotificationsEnabled;
+       // Lokalen State nicht mehr hier setzen, wird durch Backend-Antwort aktualisiert
+       // setMqttNotificationsEnabled(newState);
+       // Änderung an Backend senden
+       socket.emit('set-mqtt-notification-status', { enabled: newState });
+       // console.log(`[App] Emitted set-mqtt-notification-status: ${newState}`);
+       // Feedback direkt geben (optional)
+       // message.info(newState ? t('mqttNotificationsEnabled') : t('mqttNotificationsDisabled'), 2);
+   }, [mqttNotificationsEnabled]); // Nur Abhängigkeit vom aktuellen Zustand
 
   // Effekt für Socket-Verbindung und Listener
   useEffect(() => {
@@ -114,18 +136,18 @@ function App() {
       console.log('Socket connected');
       setIsConnected(true);
       setConnectionError(null);
-      // Backend sendet 'menu-update' und 'loggable-pages-update' bei Verbindung automatisch
-      // Explizite Anfrage nach loggable pages sicherheitshalber
-      console.log("Requesting loggable pages after connect...");
+      console.log("Requesting initial states after connect...");
       socket.emit('request-loggable-pages');
+      socket.emit('request-mqtt-notification-status'); // Initialen Status anfordern
     };
 
     const onDisconnect = (reason) => {
       console.log('Socket disconnected:', reason);
       setIsConnected(false);
       setConnectionError(t('connectionLost'));
-      setIsInitialMenuLoaded(false); // Menü muss neu geladen werden
-      setLoggablePages([]); // Logbare Seiten zurücksetzen bei Disconnect
+      setIsInitialMenuLoaded(false);
+      setLoggablePages([]);
+      setMqttNotificationsEnabled(true); // Reset auf Default beim Trennen
     };
 
     const onConnectError = (error) => {
@@ -133,7 +155,8 @@ function App() {
       setIsConnected(false);
       setConnectionError(t('connectionError', { message: error.message || 'Unknown error' }));
       setIsInitialMenuLoaded(false);
-      setLoggablePages([]); // Logbare Seiten zurücksetzen bei Fehler
+      setLoggablePages([]);
+      setMqttNotificationsEnabled(true); // Reset auf Default bei Fehler
     };
 
      const onReconnectAttempt = (attempt) => {
@@ -148,17 +171,23 @@ function App() {
 
      const onReconnectFailed = () => {
         console.log('Socket reconnect failed');
-        setConnectionError(t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.')); // String in i18n hinzufügen/prüfen
+        setConnectionError(t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.'));
      };
 
-     // Handler für logbare Seiten Updates
      const handleLoggablePagesUpdate = (pagesArray) => {
-         console.log('Loggable pages update received:', pagesArray);
+         // console.log('Loggable pages update received:', pagesArray);
          if (Array.isArray(pagesArray)) {
-             setLoggablePages(pagesArray); // Aktualisiere den State
+             setLoggablePages(pagesArray);
          } else {
-             console.warn("Ungültiges Format für loggable-pages-update empfangen.");
-             setLoggablePages([]); // Setze auf leeres Array bei ungültigen Daten
+             setLoggablePages([]);
+         }
+     };
+
+     // Handler für MQTT Notification Status Update (bleibt hier)
+     const handleMqttNotificationStatusUpdate = (data) => {
+         if (typeof data?.enabled === 'boolean') {
+             // console.log(`[App] Received mqtt-notification-status-update: ${data.enabled}`);
+             setMqttNotificationsEnabled(data.enabled);
          }
      };
 
@@ -171,20 +200,14 @@ function App() {
     socket.on('reconnect_failed', onReconnectFailed);
     socket.on('menu-update', handleMenuUpdate);
     socket.on('mqtt-property-update', handleMqttPropertyUpdate);
-    // Listener für logbare Seiten
     socket.on('loggable-pages-update', handleLoggablePagesUpdate);
+    socket.on('mqtt-notification-status-update', handleMqttNotificationStatusUpdate); // Listener für Status-Updates
 
-    // Prüfe initialen Verbindungsstatus
-    if (socket.connected) {
-       onConnect(); // Initialen Status setzen und Daten anfordern
-    } else {
-      console.log("Initial socket status: disconnected");
-      setConnectionError(t('initialConnectionError'));
-      setIsInitialMenuLoaded(false); // Kein Menü geladen
-      setLoggablePages([]); // Keine logbaren Seiten bekannt
-    }
+    // Initialen Status prüfen
+    if (socket.connected) { onConnect(); }
+    else { setConnectionError(t('initialConnectionError')); setIsInitialMenuLoaded(false); setLoggablePages([]); setMqttNotificationsEnabled(true); }
 
-    // Cleanup-Funktion: Entfernt alle Listener beim Unmounten der Komponente
+    // Cleanup-Funktion
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
@@ -195,80 +218,60 @@ function App() {
       socket.off('menu-update', handleMenuUpdate);
       socket.off('mqtt-property-update', handleMqttPropertyUpdate);
       socket.off('loggable-pages-update', handleLoggablePagesUpdate);
+      socket.off('mqtt-notification-status-update', handleMqttNotificationStatusUpdate); // Listener entfernen
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, handleMqttPropertyUpdate, handleMenuUpdate]); // Callbacks als Abhängigkeiten
 
-  // Memoisiere abgeleitete Werte: flache Menüliste und alle verwendeten SVGs
+  // Memoized Werte
   const flatMenuItems = useMemo(() => flattenMenuItems(menuData.menuItems), [menuData.menuItems]);
-  const allSvgs = useMemo(() => {
-    const svgNames = flatMenuItems.map(item => item.svg).filter(Boolean);
-    return Array.from(new Set(svgNames)); // Eindeutige SVG-Namen
-  }, [flatMenuItems]);
-
-  // Memoisiere den ersten gültigen Link für die Startroute (Fallback)
+  const allSvgs = useMemo(() => Array.from(new Set(flatMenuItems.map(item => item.svg).filter(Boolean))), [flatMenuItems]);
   const firstValidLink = useMemo(() => {
-       const homeItem = flatMenuItems.find(item => item.link === '/'); // Gibt es eine explizite Homepage?
+       const homeItem = flatMenuItems.find(item => item.link === '/');
        if (homeItem) return '/';
-       // Ansonsten das erste Element der Liste (außer /settings, falls vorhanden)
        const firstItem = flatMenuItems.find(item => item.link && item.link !== '/settings');
-       return firstItem ? firstItem.link : null; // Fallback auf null, falls gar nichts da ist
+       return firstItem ? firstItem.link : null;
   }, [flatMenuItems]);
 
+
+  // State und Handler für AlarmsPopup Sichtbarkeit
+  const [alarmsPopupVisible, setAlarmsPopupVisible] = useState(false);
+  const showAlarmsPopup = useCallback(() => setAlarmsPopupVisible(true), []);
+  const hideAlarmsPopup = useCallback(() => setAlarmsPopupVisible(false), []);
 
   // Rendern der Anwendung
   return (
-    <UserProvider> {/* Stellt Benutzerkontext bereit */}
-        <Router> {/* Router für Navigation */}
-          <MainLayout menuItems={menuData.menuItems} loggablePages={loggablePages}> {/* loggablePages weitergeben */}
+    <UserProvider>
+        <Router>
+          {/* Props an MainLayout übergeben */}
+          <MainLayout
+            menuItems={menuData.menuItems}
+            loggablePages={loggablePages}
+            onAlarmButtonClick={showAlarmsPopup} // Funktion zum Öffnen übergeben
+            mqttNotificationsEnabled={mqttNotificationsEnabled} // Zustand übergeben
+          >
             <Suspense
-              fallback={ // Ladeindikator für lazy loaded Komponenten
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>
-                  <Spin size="large" />
-                </div>
-              }
+              fallback={ <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><Spin size="large" /></div> }
             >
-             {/* Ladeindikator, bis Menü da oder Fehler auftritt */}
-             {!isInitialMenuLoaded && !connectionError && (
-                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#fff' }}>
-                   <Spin size="large" tip={t('loadingMenu', 'Lade Menü...')} />
-                 </div>
-               )}
-              {/* Routen nur rendern, wenn Menü geladen ODER ein Verbindungsfehler angezeigt wird */}
+             {!isInitialMenuLoaded && !connectionError && ( <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><Spin size="large" tip={t('loadingMenu')} /></div> )}
               {(isInitialMenuLoaded || connectionError) && (
                  <Routes>
-                   {/* Erstelle Routen für jeden Menüeintrag */}
-                   {flatMenuItems.map(item => (
-                     item && item.link ? ( // Sicherstellen, dass Item und Link existieren
-                       <Route
-                         key={item.link} // Eindeutiger Key für die Route
-                         path={item.link} // Pfad der Route
-                         element={<LazyPage svg={item.svg} properties={item} allSvgs={allSvgs} />} // Lazy loaded Seitenkomponente
-                       />
-                     ) : null // Ignoriere ungültige Einträge
-                   ))}
-                   {/* Fallback-Route: Leite auf erste gültige Seite oder zeige Meldung */}
-                   <Route path="/" element={firstValidLink ? <Navigate to={firstValidLink} replace /> : <div style={{ color: '#fff', padding: '20px' }}>{t('noPageAvailable', 'Keine Seite verfügbar.')}</div>} />
-                   {/* Route für nicht gefundene Pfade */}
-                   <Route path="*" element={<div style={{ color: '#fff', padding: '20px' }}>{t('pageNotFound', 'Seite nicht gefunden.')}</div>} />
+                   {flatMenuItems.map(item => ( item?.link ? ( <Route key={item.link} path={item.link} element={<LazyPage svg={item.svg} properties={item} allSvgs={allSvgs} />} /> ) : null ))}
+                   <Route path="/" element={firstValidLink ? <Navigate to={firstValidLink} replace /> : <div style={{ color: '#fff', padding: '20px' }}>{t('noPageAvailable')}</div>} />
+                   <Route path="*" element={<div style={{ color: '#fff', padding: '20px' }}>{t('pageNotFound')}</div>} />
                  </Routes>
                )}
             </Suspense>
           </MainLayout>
 
-           {/* Fehler-Modal für Verbindungsprobleme */}
-           <Modal
-             open={!!connectionError} // Sichtbar, wenn connectionError gesetzt ist
-             footer={null} closable={false} maskClosable={false} centered
-             styles={{ body: { backgroundColor: 'rgba(204, 0, 0, 0.9)', color: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '30px', borderRadius: '8px', minHeight: '150px'} }}
-           >
+           {/* Fehler-Modal */}
+           <Modal open={!!connectionError} footer={null} closable={false} maskClosable={false} centered styles={{ body: { backgroundColor: 'rgba(204, 0, 0, 0.9)', color: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '30px', borderRadius: '8px', minHeight: '150px'} }}>
              <div>
-               <h2 style={{ marginBottom: '15px', fontSize: '24px' }}>{t('connectionLostTitle', 'Verbindungsproblem')}</h2>
+               <h2 style={{ marginBottom: '15px', fontSize: '24px' }}>{t('connectionLostTitle')}</h2>
                <p style={{ fontSize: '18px', marginBottom: '10px' }}>{connectionError}</p>
-               {/* Zeige "Verbinde neu...", außer bei bestimmten Fehlern */}
                {connectionError && connectionError !== t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.') && !connectionError.startsWith(t('connectionError').split(':')[0]) && (
-                  <p style={{ fontSize: '16px' }}>{t('reconnecting', 'Versuche, die Verbindung wiederherzustellen...')}</p>
+                  <p style={{ fontSize: '16px' }}>{t('reconnecting')}</p>
                )}
-                {/* Zeige Reload-Button, wenn Wiederverbindung endgültig scheitert */}
                 {connectionError === t('reconnectFailed', 'Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.') && (
                    <Button type="primary" onClick={() => window.location.reload()} style={{ marginTop: '20px' }}>
                       {t('reloadPage', 'Seite neu laden')}
@@ -276,6 +279,14 @@ function App() {
                 )}
              </div>
            </Modal>
+
+          {/* Alarms Popup bekommt jetzt Props von App.js */}
+          <AlarmsPopup
+              visible={alarmsPopupVisible}
+              onClose={hideAlarmsPopup}
+              mqttNotificationsEnabled={mqttNotificationsEnabled} // Zustand übergeben
+              onToggleMqttNotifications={handleToggleMqttNotifications} // Handler übergeben
+          />
 
         </Router>
     </UserProvider>

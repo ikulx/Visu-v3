@@ -49,10 +49,10 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
 
         const setupDatabase = async () => {
           try {
-            const runSql = (sql, description) => {
+            const runSql = (sql, description, params = []) => { // Parameter hinzugefügt
               return new Promise((resolve, reject) => {
                 // console.log(`Executing SQL: ${description || 'SQL Statement...'}`); // Weniger verbose
-                sqliteDB.run(sql, (runErr) => {
+                sqliteDB.run(sql, params, (runErr) => { // Params hier verwenden
                   if (runErr) { console.error(`Fehler bei SQL (${description || 'SQL'}):`, runErr); reject(runErr); }
                   else { resolve(); }
                 });
@@ -87,9 +87,25 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_ts ON alarm_history (timestamp DESC);`, 'Create index on alarm_history timestamp');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_def ON alarm_history (definition_id);`, 'Create index on alarm_history definitions');
             console.log("Alarm History Tabelle (modifiziert) erfolgreich erstellt oder existiert bereits.");
+
+            // +++ NEU: Tabelle für globale Einstellungen +++
+            await runSql(`
+                CREATE TABLE IF NOT EXISTS "global_settings" (
+                    "key" TEXT PRIMARY KEY NOT NULL,
+                    "value" TEXT
+                )
+            `, 'Create global_settings table');
+            console.log("Tabelle global_settings erstellt oder existiert bereits.");
+
+            // Standardwert setzen, falls der Schlüssel nicht existiert (Notifications standardmäßig AN)
+            await runSql(`
+                INSERT OR IGNORE INTO global_settings (key, value) VALUES (?, ?)
+            `, 'Set default MQTT notification status', ['mqtt_new_alarm_notifications_enabled', 'true']);
+            // +++ ENDE NEU +++
+
             // --- ENDE Tabellen ---
 
-            console.log("Alle Tabellen (inkl. Alarm) erfolgreich erstellt oder existieren bereits.");
+            console.log("Alle Tabellen erfolgreich erstellt oder existieren bereits.");
 
             // --- Migrationen ---
             const columns = await new Promise((resolve, reject) => { sqliteDB.all('PRAGMA table_info(logging_settings)', (pragmaErr, cols) => { if (pragmaErr) reject(pragmaErr); else resolve(cols || []); }); });
@@ -124,10 +140,9 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
                       throw new Error("MQTT Handler/Client Initialization failed.");
                  }
 
-                 // +++ NEU: MQTT-Client global verfügbar machen +++
+                 // MQTT-Client global verfügbar machen
                  global.mqttClient = mqttHandlerInstance.mqttClient;
                  console.log("MQTT Client ist global verfügbar.");
-                 // +++ ENDE NEU +++
 
                 console.log("Initializing Logging Handler...");
                 setupLogging(io, sqliteDB, mqttHandlerInstance);
@@ -168,20 +183,17 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
 }); // Ende sqliteDB Initialisierung
 // ------------------------------------
 
-// Globaler Footer-Zustand (nur noch für nicht-Alarm-Daten)
+// Globaler Footer-Zustand
 let currentFooter = { temperature: '–' };
 
 // --- API Endpunkte ---
-// Die Routen in dbRoutes.js werden hier gemountet
 app.use('/db', dbRoutes);
 
-// --- Route für /setFooter (bleibt als HTTP POST) ---
+// Route für /setFooter (bleibt unverändert)
 app.post('/setFooter', (req, res) => {
   const footerUpdate = req.body;
-  // Logik zum Aktualisieren des Footers (z.B. Temperatur)
   if (footerUpdate.temperature !== undefined) {
       currentFooter.temperature = footerUpdate.temperature;
-      // Update per Socket.IO senden (nicht MQTT)
       if (global.io) {
           global.io.emit('footer-update', { temperature: currentFooter.temperature });
       }
@@ -194,77 +206,59 @@ app.post('/setFooter', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Neuer Client verbunden:', socket.id);
 
-  // Sende initiale Temperatur (Alarmstatus kommt vom AlarmHandler)
   socket.emit('footer-update', { temperature: currentFooter.temperature });
 
-  // Initiales Menü senden
   fetchMenuForFrontend(sqliteDB)
     .then(menu => socket.emit('menu-update', menu))
-    .catch(err => console.error("Fehler beim Senden des initialen Menüs an Client:", err));
+    .catch(err => console.error("Fehler Senden initiales Menü:", err));
 
-  // Listener für Settings-Anfrage
   socket.on('request-settings', (data) => {
     const user = data?.user || socket.loggedInUser || null;
     console.log(`Socket ${socket.id} fordert Settings für Benutzer: ${user}`);
-    broadcastSettings(socket, user, sqliteDB); // Nutze broadcastSettings aus dbRoutes
+    broadcastSettings(socket, user, sqliteDB); // Nutze Funktion aus dbRoutes
   });
 
-   // Benutzer setzen
   socket.on('set-user', (data) => {
     if (data && data.user) {
         socket.loggedInUser = data.user;
         console.log(`Socket ${socket.id} registriert Benutzer: ${data.user}`);
-        broadcastSettings(socket, data.user, sqliteDB); // Nutze broadcastSettings aus dbRoutes
+        broadcastSettings(socket, data.user, sqliteDB); // Nutze Funktion aus dbRoutes
     } else {
         console.warn(`Socket ${socket.id}: Ungültige Daten bei 'set-user'.`);
     }
   });
 
-  // Listener für Variablen-Updates vom Client
   socket.on('update-variable', async (payload) => {
-    console.log("Socket: Empfangenes 'update-variable' Event:", payload);
+    console.log("Socket: Empfangenes 'update-variable':", payload);
     if (!payload || !payload.key || !payload.search || !payload.target || payload.value === undefined) {
-      socket.emit('update-error', { message: 'Ungültiger Payload für update-variable' });
+      socket.emit('update-error', { message: 'Ungültiger Payload' });
       return;
     }
     try {
-      // Rufe die Funktion aus dbRoutes auf, die jetzt auch MQTT sendet
       const updateResult = await performVariableUpdate(payload.key, payload.search, payload.target, payload.value);
-      socket.emit('update-success', updateResult); // Sende das Ergebnis zurück
+      socket.emit('update-success', updateResult);
       console.log(`Socket: Update für ${payload.search}.${payload.target} verarbeitet.`);
-
-      // Trigger rule evaluation (wenn VAR_VALUE geändert wurde)
       if (payload.target === 'VAR_VALUE') {
           console.log(`[Socket update-variable] Triggering rule evaluation for ${payload.search}...`);
           if (typeof evaluateRules === 'function') {
               await evaluateRules(sqliteDB, payload.search, payload.value);
-          } else {
-              console.error("evaluateRules function is not available or not imported correctly!");
-          }
+          } else { console.error("evaluateRules function not available!"); }
       }
     } catch (error) {
-      console.error(`Socket: Fehler bei Verarbeitung 'update-variable' für ${payload.search}:`, error);
+      console.error(`Socket: Fehler Verarbeitung 'update-variable' für ${payload.search}:`, error);
       socket.emit('update-error', { message: error.message || 'Update fehlgeschlagen.' });
     }
   });
 
-  // Listener für 'disconnect'
   socket.on('disconnect', () => {
     console.log('Client getrennt:', socket.id);
     delete socket.loggedInUser;
   });
 
-  // Spezifische Listener für Menu, Logging, Rules, Alarms werden in den jeweiligen setup... Funktionen registriert.
-
+  // Spezifische Listener (Menu, Logging, Rules, Alarms) werden in setup... Funktionen registriert.
 });
 // ------------------------------------
 
 // Globale Fehlerbehandlung
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  // process.exit(1); // Ggf. beenden
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // process.exit(1); // Ggf. beenden
-});
+process.on('uncaughtException', (error) => { console.error('Uncaught Exception:', error); });
+process.on('unhandledRejection', (reason, promise) => { console.error('Unhandled Rejection at:', promise, 'reason:', reason); });
