@@ -275,7 +275,7 @@ const AlarmsPopup = ({ visible, onClose, mqttNotificationsEnabled, onToggleMqttN
                         icon={mqttNotificationsEnabled
                             // Icon Farbe ist jetzt immer weiß
                             ? <BellOutlined style={{ fontSize: '24px', color: '#fff' }} />
-                            : <MutedOutlined style={{ fontSize: '24px', color: '#fff' }} />
+                            : <BellOutlined style={{ fontSize: '24px', color: '#fff' }} />
                         }
                         onClick={handleToggleMqttNotifications}
                         aria-label={mqttNotificationsEnabled ? t('disableMqttNotifications') : t('enableMqttNotifications')}
@@ -283,8 +283,8 @@ const AlarmsPopup = ({ visible, onClose, mqttNotificationsEnabled, onToggleMqttN
                         style={{
                             padding: '4px 12px',
                             height: 'auto',
-                            backgroundColor: mqttNotificationsEnabled ? 'transparent' : 'transparent', // Grau wenn deaktiviert
-                            border: mqttNotificationsEnabled ? 'transparent 3px solid' : '#1890ff 3px solid', // Optional: Rahmen anpassen
+                            backgroundColor: mqttNotificationsEnabled ? 'transparent' : '#1890ff ', // Grau wenn deaktiviert
+                            // border: mqttNotificationsEnabled ? 'transparent 3px solid' : '#1890ff 3px solid', // Optional: Rahmen anpassen
                         }}
                     />
                 
