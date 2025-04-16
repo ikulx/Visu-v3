@@ -20,13 +20,13 @@ root.render(
   },
   "components": {
 
-    "Button": {
-      "algorithm": true,
-      "defaultActiveBorderColor": "rgb(255,176,0)",
-      "defaultActiveColor": "rgb(255,176,0)",
-      "defaultHoverBorderColor": "rgba(64,150,255,0)",
-      "defaultHoverColor": "rgba(64,150,255,0)",
-      "groupBorderColor": "rgb(255,176,0)"
+    Button: {
+      algorithm: true,
+      defaultActiveBorderColor: "rgb(255,176,0)",
+      defaultActiveColor: "rgb(255,176,0)",
+      defaultHoverBorderColor: "rgba(64,150,255,0)",
+      defaultHoverColor: "rgba(64,150,255,0)",
+      groupBorderColor: "rgb(255,176,0)"
     },
     Menu: {
       itemBg: '#383838',           // Hintergrund für Menüpunkte

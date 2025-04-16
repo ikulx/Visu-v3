@@ -59,7 +59,12 @@ const resources = {
       priority_prio3: "Prio 3",
       priority_warning: "Warnung",
       priority_info: "Info",
-      priority_default: "Unbekannt"
+      priority_default: "Unbekannt",
+      userSettings: "Benutzer", // <<< NEU: Für den Button
+      userSettingsTitle: "Benutzereinstellungen", // <<< NEU: Für den Popup-Titel
+      currentUser: "Aktueller Benutzer", // <<< NEU
+      userSettingsPlaceholder: "Weitere Einstellungen folgen...", // <<< NEU
+      notLoggedIn: "Nicht angemeldet.", // <<< NEU
     }
   },
   en: {
@@ -118,7 +123,13 @@ const resources = {
       priority_prio3: "Prio 3",
       priority_warning: "Warning",
       priority_info: "Info",
-      priority_default: "Unknown"
+      priority_default: "Unknown",
+      userSettings: "User", // <<< NEU
+      userSettingsTitle: "User Settings", // <<< NEU
+      currentUser: "Current User", // <<< NEU
+      userSettingsPlaceholder: "More settings will follow...", // <<< NEU
+      notLoggedIn: "Not logged in.", // <<< NEU
+      
     }
   },
   fr: {
@@ -176,7 +187,12 @@ const resources = {
       priority_prio3: "Prio 3",
       priority_warning: "Avertissement",
       priority_info: "Info",
-      priority_default: "Inconnue"
+      priority_default: "Inconnue",
+      userSettings: "Utilisateur", // <<< NEU
+      userSettingsTitle: "Paramètres utilisateur", // <<< NEU
+      currentUser: "Utilisateur actuel", // <<< NEU
+      userSettingsPlaceholder: "D'autres paramètres suivront...", // <<< NEU
+      notLoggedIn: "Non connecté.", // <<< NEU
     }
   },
   it: {
@@ -234,7 +250,12 @@ const resources = {
       priority_prio3: "Prio 3",
       priority_warning: "Avviso",
       priority_info: "Info",
-      priority_default: "Sconosciuta"
+      priority_default: "Sconosciuta",
+      userSettings: "Utente", // <<< NEU
+      userSettingsTitle: "Impostazioni utente", // <<< NEU
+      currentUser: "Utente corrente", // <<< NEU
+      userSettingsPlaceholder: "Altre impostazioni seguiranno...", // <<< NEU
+      notLoggedIn: "Non connesso.", // <<< NEU
     }
   }
 };

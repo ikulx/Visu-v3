@@ -17,6 +17,7 @@ import SettingsPage from '../SettingsPage';
 import MenuConfigModal from './MenuConfigModal';
 import pinMapping from '../pinMapping.json';
 import { useUser } from '../UserContext';
+import UserSettingsPopup from './UserSettingsPopup';
 
 const { useBreakpoint } = Grid;
 
@@ -32,8 +33,14 @@ const HeaderComponent = ({ menuItems }) => {
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [settingsPopupVisible, setSettingsPopupVisible] = useState(false);
   const [menuConfigVisible, setMenuConfigVisible] = useState(false);
+  const [userSettingsVisible, setUserSettingsVisible] = useState(false);
 
   const validUsers = pinMapping;
+  const showUserSettings = () => {
+         setLanguageModalVisible(false); // Schließe das aktuelle Modal
+         setUserSettingsVisible(true);   // Öffne das User Settings Modal
+     };
+  const hideUserSettings = () => setUserSettingsVisible(false);
 
   const createMenuItem = (item) => {
     if (item.sub && Array.isArray(item.sub) && item.sub.length > 0) {
@@ -86,7 +93,7 @@ const HeaderComponent = ({ menuItems }) => {
   const homeButton = (
     <Button
       className="header-home-button"
-      type="default"
+      type="primary"
       ghost
       icon={<HomeOutlined style={{ fontSize: '32px', color: isHomeActive ? activeColor : '#fff' }} />}
       onClick={() => navigate('/')}
@@ -125,7 +132,7 @@ const HeaderComponent = ({ menuItems }) => {
       <div style={{ marginTop: '20px', textAlign: 'center' }}>
         {!loggedInUser ? (
           <Button
-            type="default"
+            type="primary"
             onClick={() => {
               setLanguageModalVisible(false);
               setPinModalVisible(true);
@@ -137,7 +144,15 @@ const HeaderComponent = ({ menuItems }) => {
         ) : (
           <div style={{ marginTop: '20px' }}>
             <Button
-              type="default"
+                type="primary"
+                onClick={showUserSettings} // Öffnet das neue Popup
+                style={{ marginRight: '10px', backgroundColor: '#333', height: '50px', width: '70px', border: 'none', color: 'white' }}
+                aria-label={t('userSettings', 'Benutzer')} // Für Barrierefreiheit
+            >
+                <UserOutlined style={{ fontSize: '30px' }} />
+            </Button>
+            <Button
+              type="primary"
               onClick={() => {
                 setLanguageModalVisible(false);
                 setSettingsPopupVisible(true);
@@ -148,7 +163,7 @@ const HeaderComponent = ({ menuItems }) => {
             </Button>
             {loggedInUser === 'admin' && (
               <Button
-                type="default"
+                type="primary"
                 onClick={() => {
                   setLanguageModalVisible(false);
                   setMenuConfigVisible(true);
@@ -159,7 +174,7 @@ const HeaderComponent = ({ menuItems }) => {
               </Button>
             )}
             <Button
-              type="default"
+              type="primary"
               onClick={() => setLoggedInUser(null)}
               style={{ backgroundColor: '#333', height: '50px', width: '70px', border: 'none' }}
             >
@@ -185,7 +200,7 @@ const HeaderComponent = ({ menuItems }) => {
         />
         <Button
           className="header-user-button"
-          type="default"
+          type="primary"
           ghost
           icon={<UserOutlined style={{ fontSize: '32px', color: '#fff' }} />}
           onClick={() => setLanguageModalVisible(true)}
@@ -211,6 +226,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={menuConfigVisible}
           onClose={() => setMenuConfigVisible(false)}
         />
+        <UserSettingsPopup visible={userSettingsVisible} onClose={hideUserSettings} />
       </div>
     );
   } else {
@@ -218,7 +234,7 @@ const HeaderComponent = ({ menuItems }) => {
       <div className="header-container mobile">
         {homeButton}
         <Button
-          type="default"
+          type="primary"
           className="header-menu-button"
           ghost
           icon={<MenuOutlined style={{ fontSize: '32px', color: '#fff' }} />}
@@ -226,7 +242,7 @@ const HeaderComponent = ({ menuItems }) => {
         />
         <Button
           className="header-user-button"
-          type="default"
+          type="primary"
           ghost
           icon={<UserOutlined style={{ fontSize: '32px', color: '#fff' }} />}
           onClick={() => setLanguageModalVisible(true)}
@@ -267,6 +283,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={menuConfigVisible}
           onClose={() => setMenuConfigVisible(false)}
         />
+        <UserSettingsPopup visible={userSettingsVisible} onClose={hideUserSettings} />
       </div>
     );
   }
