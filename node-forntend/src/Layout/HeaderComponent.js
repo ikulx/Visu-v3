@@ -226,7 +226,7 @@ const HeaderComponent = ({ menuItems }) => {
           visible={menuConfigVisible}
           onClose={() => setMenuConfigVisible(false)}
         />
-        <UserSettingsPopup visible={userSettingsVisible} onClose={hideUserSettings} />
+        <UserSettingsPopup visible={userSettingsVisible} onClose={hideUserSettings} currentUser={loggedInUser} />
       </div>
     );
   } else {

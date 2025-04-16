@@ -6,6 +6,7 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 const resources = {
   de: {
     translation: {
+      // --- Originale Schlüssel ---
       projektnummerLabel: "Projektnummer:",
       schemanummerLabel: "Schemanummer:",
       "Kreis Seiten": "Kreis Seiten",
@@ -22,7 +23,6 @@ const resources = {
       "BWW": "WARMWASSER",
       "HG": "HEIZGRUPPE",
       "PS": "SPEICHER",
-      // Neue Übersetzungen für Verbindungsfehler
       connectionLostTitle: "Verbindungsproblem",
       connectionLost: "Verbindung zum Server unterbrochen",
       connectionError: "Verbindungsfehler: {{message}}",
@@ -34,41 +34,84 @@ const resources = {
       from:"von",
       to:"bis",
       ALARM_RESET_ACTION:"RESET",
-      alarmNotificationsSuppressed: "Alarmmeldungen unterdrückt!", // <<< NEU
-      mqttNotificationsEnabled: "MQTT Alarm-Benachrichtigungen aktiviert.", // <<< NEU (für message.info)
-      mqttNotificationsDisabled: "MQTT Alarm-Benachrichtigungen deaktiviert.", // <<< NEU (für message.info)
-      disableMqttNotificationsTooltip: "MQTT-Benachrichtigungen für neue Alarme deaktivieren", // <<< NEU
-      enableMqttNotificationsTooltip: "MQTT-Benachrichtigungen für neue Alarme aktivieren", // <<< NEU
-      alarmsTitle: "Alarme & Meldungen", // <<< NEU
-      close: "Schließen", // <<< NEU
-      reset: "Reset", // <<< NEU
-      currentAlarms: "Aktuelle Alarme", // <<< NEU
-      alarmHistory: "Historie", // <<< NEU
-      status_active: "Aktiv", // <<< NEU
-      status_inactive: "Inaktiv", // <<< NEU
-      status_reset: "Reset", // <<< NEU
-      noActiveAlarms: "Keine aktiven Alarme", // <<< NEU
-      noAlarmHistory: "Keine Alarmhistorie verfügbar", // <<< NEU
-      paginationText: "{{start}}-{{end}} von {{total}} Einträgen", // <<< NEU
-      errorLoadingHistory: "Fehler beim Laden der Historie.", // <<< NEU
-      errorLoadingActiveAlarms: "Fehler beim Laden der aktiven Alarme.", // <<< NEU
-      resetConfirmed: "Reset vom System bestätigt.", // <<< NEU
-      // Prioritäten (Beispiel)
+      // --- Neue/Aktualisierte Schlüssel ---
+      alarmNotificationsSuppressed: "Alarmmeldungen unterdrückt!",
+      mqttNotificationsEnabled: "MQTT Alarm-Benachrichtigungen aktiviert.",
+      mqttNotificationsDisabled: "MQTT Alarm-Benachrichtigungen deaktiviert.",
+      disableMqttNotificationsTooltip: "MQTT-Benachrichtigungen für neue Alarme deaktivieren",
+      enableMqttNotificationsTooltip: "MQTT-Benachrichtigungen für neue Alarme aktivieren",
+      alarmsTitle: "Alarme & Meldungen",
+      close: "Schließen",
+      reset: "Reset",
+      currentAlarms: "Aktuelle Alarme",
+      alarmHistory: "Historie",
+      status_active: "Aktiv",
+      status_inactive: "Inaktiv",
+      status_reset: "Reset",
+      noActiveAlarms: "Keine aktiven Alarme",
+      noAlarmHistory: "Keine Alarmhistorie verfügbar",
+      paginationText: "{{start}}-{{end}} von {{total}} Einträgen",
+      errorLoadingHistory: "Fehler beim Laden der Historie.",
+      errorLoadingActiveAlarms: "Fehler beim Laden der aktiven Alarme.",
+      resetConfirmed: "Reset vom System bestätigt.",
       priority_prio1: "Prio 1",
       priority_prio2: "Prio 2",
       priority_prio3: "Prio 3",
       priority_warning: "Warnung",
       priority_info: "Info",
       priority_default: "Unbekannt",
-      userSettings: "Benutzer", // <<< NEU: Für den Button
-      userSettingsTitle: "Benutzereinstellungen", // <<< NEU: Für den Popup-Titel
-      currentUser: "Aktueller Benutzer", // <<< NEU
-      userSettingsPlaceholder: "Weitere Einstellungen folgen...", // <<< NEU
-      notLoggedIn: "Nicht angemeldet.", // <<< NEU
+      userSettings: "Benutzer",
+      userSettingsTitle: "Benutzereinstellungen",
+      currentUser: "Aktueller Benutzer",
+      userSettingsPlaceholder: "Weitere Einstellungen folgen...",
+      notLoggedIn: "Nicht angemeldet.",
+      configureAlarmNotifications: "Konfigurieren Sie hier, wer bei Alarmen welcher Priorität per E-Mail oder Telefon benachrichtigt werden soll.",
+      emailNotifications: "E-Mail Benachrichtigungen",
+      phoneNotifications: "Telefon Benachrichtigungen",
+      noTargetsConfigured: "Keine Ziele konfiguriert.",
+      editPriorities: "Prioritäten bearbeiten",
+      save: "Speichern",
+      cancel: "Abbrechen",
+      confirmDeleteTarget: "Dieses Ziel wirklich löschen?",
+      yes: "Ja",
+      no: "Nein",
+      delete: "Löschen",
+      addNewTarget: "Neues Ziel hinzufügen",
+      pleaseEnterTarget: "Bitte Ziel eingeben!",
+      selectPriorities: "Prioritäten auswählen",
+      add: "Hinzufügen",
+      emailAddress: "E-Mail Adresse",
+      phoneNumber: "Telefonnummer",
+      targetCannotBeEmpty: "Ziel darf nicht leer sein.",
+      invalidEmailFormat: "Ungültiges E-Mail-Format.",
+      invalidPhoneFormat: "Ungültiges Telefonnummern-Format (mind. 5 Zeichen).",
+      delayInMinutes: "Verzögerung (Minuten)",
+      delayLabel: "Verzögert um",
+      minutesSuffix: "Min.",
+      minutesSuffixShort: "Min",
+      targetDelayInfo: "Für Ziele kann eine Verzögerung in Minuten eingestellt werden.", // Angepasster Text
+      delay: "Verzögerung",
+      logout: "Logout",
+      login: "Login",
+      settings: "Einstellungen",
+      loadingMenu: "Menü wird geladen...",
+      reconnectFailed: "Wiederverbindung fehlgeschlagen. Bitte laden Sie die Seite neu.",
+      reloadPage: "Seite neu laden",
+      noPageAvailable: "Keine Seite verfügbar.",
+      pageNotFound: "Seite nicht gefunden",
+      checkInput: "Bitte Eingaben prüfen.",
+      Prioritäten: "Prioritäten",
+      smsNotificationsActive: "SMS Benachrichtigungen aktiv",
+      smsRequiresSubscriptionTitle: "Zusätzliches Abonnement benötigt",
+      smsRequiresSubscriptionText: "Um SMS-Benachrichtigungen zu erhalten, ist ein aktives SMS-Abonnement erforderlich. Bitte kontaktieren Sie Ihren Dienstanbieter.",
+      active: "Aktiv",
+      inactive: "Inaktiv",
+      permissionRequiredSms: "Nur Admin/Fachmann kann dies ändern.",
     }
   },
   en: {
     translation: {
+      // --- Originale Schlüssel ---
       projektnummerLabel: "Project number:",
       schemanummerLabel: "Schema number:",
       "Kreis Seiten": "Circle Pages",
@@ -86,7 +129,6 @@ const resources = {
       "HG": "HEATING GROUP",
       "PS": "STORAGE",
       Heizgruppen: "Heating groups",
-      // Neue Übersetzungen für Verbindungsfehler
       connectionLostTitle: "Connection Issue",
       connectionLost: "Connection to server lost",
       connectionError: "Connection error: {{message}}",
@@ -98,42 +140,84 @@ const resources = {
       from:"from",
       to:"to",
       ALARM_RESET_ACTION:"RESET",
-      alarmNotificationsSuppressed: "Alarm notifications suppressed!", // <<< NEU
-      mqttNotificationsEnabled: "MQTT alarm notifications enabled.", // <<< NEU
-      mqttNotificationsDisabled: "MQTT alarm notifications disabled.", // <<< NEU
-      disableMqttNotificationsTooltip: "Disable MQTT notifications for new alarms", // <<< NEU
-      enableMqttNotificationsTooltip: "Enable MQTT notifications for new alarms", // <<< NEU
-      alarmsTitle: "Alarms & Messages", // <<< NEU
-      close: "Close", // <<< NEU
-      reset: "Reset", // <<< NEU
-      currentAlarms: "Current Alarms", // <<< NEU
-      alarmHistory: "History", // <<< NEU
-      status_active: "Active", // <<< NEU
-      status_inactive: "Inactive", // <<< NEU
-      status_reset: "Reset", // <<< NEU
-      noActiveAlarms: "No active alarms", // <<< NEU
-      noAlarmHistory: "No alarm history available", // <<< NEU
-      paginationText: "{{start}}-{{end}} of {{total}} entries", // <<< NEU
-      errorLoadingHistory: "Error loading history.", // <<< NEU
-      errorLoadingActiveAlarms: "Error loading active alarms.", // <<< NEU
-      resetConfirmed: "Reset confirmed by system.", // <<< NEU
-      // Priorities (Example)
+      // --- Neue/Aktualisierte Schlüssel ---
+      alarmNotificationsSuppressed: "Alarm notifications suppressed!",
+      mqttNotificationsEnabled: "MQTT alarm notifications enabled.",
+      mqttNotificationsDisabled: "MQTT alarm notifications disabled.",
+      disableMqttNotificationsTooltip: "Disable MQTT notifications for new alarms",
+      enableMqttNotificationsTooltip: "Enable MQTT notifications for new alarms",
+      alarmsTitle: "Alarms & Messages",
+      close: "Close",
+      reset: "Reset",
+      currentAlarms: "Current Alarms",
+      alarmHistory: "History",
+      status_active: "Active",
+      status_inactive: "Inactive",
+      status_reset: "Reset",
+      noActiveAlarms: "No active alarms",
+      noAlarmHistory: "No alarm history available",
+      paginationText: "{{start}}-{{end}} of {{total}} entries",
+      errorLoadingHistory: "Error loading history.",
+      errorLoadingActiveAlarms: "Error loading active alarms.",
+      resetConfirmed: "Reset confirmed by system.",
       priority_prio1: "Prio 1",
       priority_prio2: "Prio 2",
       priority_prio3: "Prio 3",
       priority_warning: "Warning",
       priority_info: "Info",
       priority_default: "Unknown",
-      userSettings: "User", // <<< NEU
-      userSettingsTitle: "User Settings", // <<< NEU
-      currentUser: "Current User", // <<< NEU
-      userSettingsPlaceholder: "More settings will follow...", // <<< NEU
-      notLoggedIn: "Not logged in.", // <<< NEU
-      
+      userSettings: "User",
+      userSettingsTitle: "User Settings",
+      currentUser: "Current User",
+      userSettingsPlaceholder: "More settings will follow...",
+      notLoggedIn: "Not logged in.",
+      configureAlarmNotifications: "Configure who should be notified via email or phone for alarms of which priority.",
+      emailNotifications: "Email Notifications",
+      phoneNotifications: "Phone Notifications",
+      noTargetsConfigured: "No targets configured.",
+      editPriorities: "Edit Priorities",
+      save: "Save",
+      cancel: "Cancel",
+      confirmDeleteTarget: "Really delete this target?",
+      yes: "Yes",
+      no: "No",
+      delete: "Delete",
+      addNewTarget: "Add New Target",
+      pleaseEnterTarget: "Please enter target!",
+      selectPriorities: "Select priorities",
+      add: "Add",
+      emailAddress: "Email Address",
+      phoneNumber: "Phone Number",
+      targetCannotBeEmpty: "Target cannot be empty.",
+      invalidEmailFormat: "Invalid email format.",
+      invalidPhoneFormat: "Invalid phone number format (min. 5 digits).",
+      delayInMinutes: "Delay (Minutes)",
+      delayLabel: "Delayed by",
+      minutesSuffix: "Min.",
+      minutesSuffixShort: "Min",
+      targetDelayInfo: "For targets, a delay in minutes can be set.", // Angepasster Text
+      delay: "Delay",
+      logout: "Logout",
+      login: "Login",
+      settings: "Settings",
+      loadingMenu: "Loading menu...",
+      reconnectFailed: "Reconnect failed. Please reload the page.",
+      reloadPage: "Reload page",
+      noPageAvailable: "No page available.",
+      pageNotFound: "Page not found",
+      checkInput: "Please check inputs.",
+      Prioritäten: "Priorities",
+      smsNotificationsActive: "SMS Notifications Active",
+      smsRequiresSubscriptionTitle: "Additional Subscription Required",
+      smsRequiresSubscriptionText: "To receive SMS notifications, an active SMS subscription is required. Please contact your service provider.",
+      active: "Active",
+      inactive: "Inactive",
+      permissionRequiredSms: "Only Admin/Technician can change this.",
     }
   },
-  fr: {
+  fr: { // Französische Übersetzungen hinzugefügt/aktualisiert
     translation: {
+      // --- Originale Schlüssel ---
       projektnummerLabel: "Numéro de projet:",
       schemanummerLabel: "Numéro de schéma:",
       "Kreis Seiten": "Pages de Cercle",
@@ -150,7 +234,6 @@ const resources = {
       "BWW": "EAU CHAUDE",
       "HG": "GROUPE DE CHAUFFAGE",
       "PS": "STOCKAGE",
-      // Neue Übersetzungen für Verbindungsfehler
       connectionLostTitle: "Problème de connexion",
       connectionLost: "Connexion au serveur perdue",
       connectionError: "Erreur de connexion: {{message}}",
@@ -162,41 +245,84 @@ const resources = {
       from:"de",
       to:"à",
       ALARM_RESET_ACTION:"RESET",
-      alarmNotificationsSuppressed: "Notifications d'alarme supprimées!", // <<< NEU
-      mqttNotificationsEnabled: "Notifications d'alarme MQTT activées.", // <<< NEU
-      mqttNotificationsDisabled: "Notifications d'alarme MQTT désactivées.", // <<< NEU
-      disableMqttNotificationsTooltip: "Désactiver les notifications MQTT pour les nouvelles alarmes", // <<< NEU
-      enableMqttNotificationsTooltip: "Activer les notifications MQTT pour les nouvelles alarmes", // <<< NEU
-      alarmsTitle: "Alarmes & Messages", // <<< NEU
-      close: "Fermer", // <<< NEU
-      reset: "Réinitialiser", // <<< NEU
-      currentAlarms: "Alarmes Actuelles", // <<< NEU
-      alarmHistory: "Historique", // <<< NEU
-      status_active: "Actif", // <<< NEU
-      status_inactive: "Inactif", // <<< NEU
-      status_reset: "Réinitialisé", // <<< NEU
-      noActiveAlarms: "Aucune alarme active", // <<< NEU
-      noAlarmHistory: "Aucun historique d'alarme disponible", // <<< NEU
-      paginationText: "{{start}}-{{end}} sur {{total}} entrées", // <<< NEU
-      errorLoadingHistory: "Erreur lors du chargement de l'historique.", // <<< NEU
-      errorLoadingActiveAlarms: "Erreur lors du chargement des alarmes actives.", // <<< NEU
-      resetConfirmed: "Réinitialisation confirmée par le système.", // <<< NEU
-      // Priorités (Exemple)
+      // --- Neue/Aktualisierte Schlüssel ---
+      alarmNotificationsSuppressed: "Notifications d'alarme supprimées!",
+      mqttNotificationsEnabled: "Notifications d'alarme MQTT activées.",
+      mqttNotificationsDisabled: "Notifications d'alarme MQTT désactivées.",
+      disableMqttNotificationsTooltip: "Désactiver les notifications MQTT pour les nouvelles alarmes",
+      enableMqttNotificationsTooltip: "Activer les notifications MQTT pour les nouvelles alarmes",
+      alarmsTitle: "Alarmes & Messages",
+      close: "Fermer",
+      reset: "Réinitialiser",
+      currentAlarms: "Alarmes Actuelles",
+      alarmHistory: "Historique",
+      status_active: "Actif",
+      status_inactive: "Inactif",
+      status_reset: "Réinitialisé",
+      noActiveAlarms: "Aucune alarme active",
+      noAlarmHistory: "Aucun historique d'alarme disponible",
+      paginationText: "{{start}}-{{end}} sur {{total}} entrées",
+      errorLoadingHistory: "Erreur lors du chargement de l'historique.",
+      errorLoadingActiveAlarms: "Erreur lors du chargement des alarmes actives.",
+      resetConfirmed: "Réinitialisation confirmée par le système.",
       priority_prio1: "Prio 1",
       priority_prio2: "Prio 2",
       priority_prio3: "Prio 3",
       priority_warning: "Avertissement",
       priority_info: "Info",
       priority_default: "Inconnue",
-      userSettings: "Utilisateur", // <<< NEU
-      userSettingsTitle: "Paramètres utilisateur", // <<< NEU
-      currentUser: "Utilisateur actuel", // <<< NEU
-      userSettingsPlaceholder: "D'autres paramètres suivront...", // <<< NEU
-      notLoggedIn: "Non connecté.", // <<< NEU
+      userSettings: "Utilisateur",
+      userSettingsTitle: "Paramètres utilisateur",
+      currentUser: "Utilisateur actuel",
+      userSettingsPlaceholder: "D'autres paramètres suivront...",
+      notLoggedIn: "Non connecté.",
+      configureAlarmNotifications: "Configurez ici qui doit être averti par e-mail ou téléphone pour les alarmes de quelle priorité.",
+      emailNotifications: "Notifications par E-mail",
+      phoneNotifications: "Notifications par Téléphone",
+      noTargetsConfigured: "Aucune cible configurée.",
+      editPriorities: "Modifier les Priorités",
+      save: "Enregistrer",
+      cancel: "Annuler",
+      confirmDeleteTarget: "Vraiment supprimer cette cible?",
+      yes: "Oui",
+      no: "Non",
+      delete: "Supprimer",
+      addNewTarget: "Ajouter Nouvelle Cible",
+      pleaseEnterTarget: "Veuillez saisir la cible!",
+      selectPriorities: "Sélectionner priorités",
+      add: "Ajouter",
+      emailAddress: "Adresse E-mail",
+      phoneNumber: "Numéro de Téléphone",
+      targetCannotBeEmpty: "La cible ne peut pas être vide.",
+      invalidEmailFormat: "Format d'e-mail invalide.",
+      invalidPhoneFormat: "Format de numéro de téléphone invalide (min. 5 chiffres).",
+      delayInMinutes: "Délai (Minutes)",
+      delayLabel: "Retardé de",
+      minutesSuffix: "Min.",
+      minutesSuffixShort: "Min",
+      targetDelayInfo: "Pour les cibles, un délai en minutes peut être défini.", // Angepasster Text
+      delay: "Délai",
+      logout: "Déconnexion",
+      login: "Connexion",
+      settings: "Paramètres",
+      loadingMenu: "Chargement du menu...",
+      reconnectFailed: "Échec de la reconnexion. Veuillez recharger la page.",
+      reloadPage: "Recharger la page",
+      noPageAvailable: "Aucune page disponible.",
+      pageNotFound: "Page non trouvée",
+      checkInput: "Veuillez vérifier les entrées.",
+      Prioritäten: "Priorités",
+      smsNotificationsActive: "Notifications SMS Actives",
+      smsRequiresSubscriptionTitle: "Abonnement Supplémentaire Requis",
+      smsRequiresSubscriptionText: "Pour recevoir des notifications par SMS, un abonnement SMS actif est requis. Veuillez contacter votre fournisseur de services.",
+      active: "Actif",
+      inactive: "Inactif",
+      permissionRequiredSms: "Seuls l'administrateur/technicien peuvent modifier ceci.",
     }
   },
-  it: {
+  it: { // Italienische Übersetzungen hinzugefügt/aktualisiert
     translation: {
+      // --- Originale Schlüssel ---
       projektnummerLabel: "Numero del progetto:",
       schemanummerLabel: "Numero schema:",
       "Kreis Seiten": "Pagine del Cerchio",
@@ -213,7 +339,6 @@ const resources = {
       "BWW": "ACQUA CALDA",
       "HG": "GRUPPO RISCALDAMENTO",
       "PS": "MEMORIA",
-      // Neue Übersetzungen für Verbindungsfehler
       connectionLostTitle: "Problema di connessione",
       connectionLost: "Connessione al server persa",
       connectionError: "Errore di connessione: {{message}}",
@@ -225,37 +350,79 @@ const resources = {
       from:"da",
       to:"a",
       ALARM_RESET_ACTION:"RESET",
-      alarmNotificationsSuppressed: "Notifiche di allarme soppresse!", // <<< NEU
-      mqttNotificationsEnabled: "Notifiche di allarme MQTT abilitate.", // <<< NEU
-      mqttNotificationsDisabled: "Notifiche di allarme MQTT disabilitate.", // <<< NEU
-      disableMqttNotificationsTooltip: "Disabilita notifiche MQTT per nuovi allarmi", // <<< NEU
-      enableMqttNotificationsTooltip: "Abilita notifiche MQTT per nuovi allarmi", // <<< NEU
-      alarmsTitle: "Allarmi & Messaggi", // <<< NEU
-      close: "Chiudi", // <<< NEU
-      reset: "Reset", // <<< NEU
-      currentAlarms: "Allarmi Attuali", // <<< NEU
-      alarmHistory: "Storico", // <<< NEU
-      status_active: "Attivo", // <<< NEU
-      status_inactive: "Inattivo", // <<< NEU
-      status_reset: "Reset", // <<< NEU
-      noActiveAlarms: "Nessun allarme attivo", // <<< NEU
-      noAlarmHistory: "Nessuno storico allarmi disponibile", // <<< NEU
-      paginationText: "{{start}}-{{end}} di {{total}} voci", // <<< NEU
-      errorLoadingHistory: "Errore durante il caricamento dello storico.", // <<< NEU
-      errorLoadingActiveAlarms: "Errore durante il caricamento degli allarmi attivi.", // <<< NEU
-      resetConfirmed: "Reset confermato dal sistema.", // <<< NEU
-      // Priorità (Esempio)
+      // --- Neue/Aktualisierte Schlüssel ---
+      alarmNotificationsSuppressed: "Notifiche di allarme soppresse!",
+      mqttNotificationsEnabled: "Notifiche di allarme MQTT abilitate.",
+      mqttNotificationsDisabled: "Notifiche di allarme MQTT disabilitate.",
+      disableMqttNotificationsTooltip: "Disabilita notifiche MQTT per nuovi allarmi",
+      enableMqttNotificationsTooltip: "Abilita notifiche MQTT per nuovi allarmi",
+      alarmsTitle: "Allarmi & Messaggi",
+      close: "Chiudi",
+      reset: "Reset",
+      currentAlarms: "Allarmi Attuali",
+      alarmHistory: "Storico",
+      status_active: "Attivo",
+      status_inactive: "Inattivo",
+      status_reset: "Reset",
+      noActiveAlarms: "Nessun allarme attivo",
+      noAlarmHistory: "Nessuno storico allarmi disponibile",
+      paginationText: "{{start}}-{{end}} di {{total}} voci",
+      errorLoadingHistory: "Errore durante il caricamento dello storico.",
+      errorLoadingActiveAlarms: "Errore durante il caricamento degli allarmi attivi.",
+      resetConfirmed: "Reset confermato dal sistema.",
       priority_prio1: "Prio 1",
       priority_prio2: "Prio 2",
       priority_prio3: "Prio 3",
       priority_warning: "Avviso",
       priority_info: "Info",
       priority_default: "Sconosciuta",
-      userSettings: "Utente", // <<< NEU
-      userSettingsTitle: "Impostazioni utente", // <<< NEU
-      currentUser: "Utente corrente", // <<< NEU
-      userSettingsPlaceholder: "Altre impostazioni seguiranno...", // <<< NEU
-      notLoggedIn: "Non connesso.", // <<< NEU
+      userSettings: "Utente",
+      userSettingsTitle: "Impostazioni utente",
+      currentUser: "Utente corrente",
+      userSettingsPlaceholder: "Altre impostazioni seguiranno...",
+      notLoggedIn: "Non connesso.",
+      configureAlarmNotifications: "Configura qui chi deve essere avvisato via e-mail o telefono per allarmi di quale priorità.",
+      emailNotifications: "Notifiche Email",
+      phoneNotifications: "Notifiche Telefono",
+      noTargetsConfigured: "Nessuna destinazione configurata.",
+      editPriorities: "Modifica Priorità",
+      save: "Salva",
+      cancel: "Annulla",
+      confirmDeleteTarget: "Eliminare davvero questa destinazione?",
+      yes: "Sì",
+      no: "No",
+      delete: "Elimina",
+      addNewTarget: "Aggiungi Nuova Destinazione",
+      pleaseEnterTarget: "Inserisci destinazione!",
+      selectPriorities: "Seleziona priorità",
+      add: "Aggiungi",
+      emailAddress: "Indirizzo Email",
+      phoneNumber: "Numero di Telefono",
+      targetCannotBeEmpty: "La destinazione non può essere vuota.",
+      invalidEmailFormat: "Formato email non valido.",
+      invalidPhoneFormat: "Formato numero di telefono non valido (min. 5 cifre).",
+      delayInMinutes: "Ritardo (Minuti)",
+      delayLabel: "Ritardato di",
+      minutesSuffix: "Min.",
+      minutesSuffixShort: "Min",
+      targetDelayInfo: "Per le destinazioni, è possibile impostare un ritardo in minuti.", // Angepasster Text
+      delay: "Ritardo",
+      logout: "Logout",
+      login: "Login",
+      settings: "Impostazioni",
+      loadingMenu: "Caricamento menu...",
+      reconnectFailed: "Riconnessione fallita. Si prega di ricaricare la pagina.",
+      reloadPage: "Ricarica pagina",
+      noPageAvailable: "Nessuna pagina disponibile.",
+      pageNotFound: "Pagina non trovata",
+      checkInput: "Si prega di controllare gli input.",
+      Prioritäten: "Priorità",
+      smsNotificationsActive: "Notifiche SMS Attive",
+      smsRequiresSubscriptionTitle: "Abbonamento Aggiuntivo Richiesto",
+      smsRequiresSubscriptionText: "Per ricevere notifiche SMS, è necessario un abbonamento SMS attivo. Si prega di contattare il proprio fornitore di servizi.",
+      active: "Attivo",
+      inactive: "Inattivo",
+      permissionRequiredSms: "Solo Admin/Tecnico può modificare questo.",
     }
   }
 };
@@ -265,10 +432,12 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    fallbackLng: 'en',
+    fallbackLng: 'de', // Fallback auf Deutsch
     interpolation: {
       escapeValue: false, // React escaped bereits
     },
+     // Optional: Debugging aktivieren
+     // debug: process.env.NODE_ENV === 'development',
   });
 
 export default i18n;

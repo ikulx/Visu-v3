@@ -52,14 +52,14 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
             const runSql = (sql, description, params = []) => { // Parameter hinzugefügt
               return new Promise((resolve, reject) => {
                 // console.log(`Executing SQL: ${description || 'SQL Statement...'}`); // Weniger verbose
-                sqliteDB.run(sql, params, (runErr) => { // Params hier verwenden
+                sqliteDB.run(sql, params, function(runErr) { // Params hier verwenden, 'function' für this
                   if (runErr) { console.error(`Fehler bei SQL (${description || 'SQL'}):`, runErr); reject(runErr); }
-                  else { resolve(); }
+                  else { resolve({ lastID: this.lastID, changes: this.changes }); } // Ergebnis zurückgeben
                 });
               });
             };
 
-            // --- Tabellen erstellen ---
+            // --- Bestehende Tabellen erstellen ---
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_items" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "label" VARCHAR, "link" VARCHAR, "svg" VARCHAR, "enable" BOOLEAN DEFAULT 1, "parent_id" INTEGER, "sort_order" INTEGER, "qhmiVariable" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("parent_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_items');
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_properties" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "menu_item_id" INTEGER, "key" VARCHAR, "value" VARCHAR, "source_type" VARCHAR CHECK(source_type IN ('static', 'dynamic', 'mqtt')), "source_key" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_properties');
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_actions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "menu_item_id" INTEGER, "action_name" VARCHAR, "qhmi_variable_name" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_actions');
@@ -86,36 +86,73 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
             `, 'Create alarm_history table (modified)');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_ts ON alarm_history (timestamp DESC);`, 'Create index on alarm_history timestamp');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_def ON alarm_history (definition_id);`, 'Create index on alarm_history definitions');
-            console.log("Alarm History Tabelle (modifiziert) erfolgreich erstellt oder existiert bereits.");
 
-            // +++ NEU: Tabelle für globale Einstellungen +++
+            // Tabelle für globale Einstellungen
             await runSql(`
                 CREATE TABLE IF NOT EXISTS "global_settings" (
                     "key" TEXT PRIMARY KEY NOT NULL,
                     "value" TEXT
                 )
             `, 'Create global_settings table');
-            console.log("Tabelle global_settings erstellt oder existiert bereits.");
 
-            // Standardwert setzen, falls der Schlüssel nicht existiert (Notifications standardmäßig AN)
+            // Standardwert für MQTT Notification Mute setzen
             await runSql(`
                 INSERT OR IGNORE INTO global_settings (key, value) VALUES (?, ?)
             `, 'Set default MQTT notification status', ['mqtt_new_alarm_notifications_enabled', 'true']);
-            // +++ ENDE NEU +++
 
-            // --- ENDE Tabellen ---
+            // Standardwert für SMS-Benachrichtigungen setzen (standardmäßig AUS)
+            await runSql(`
+                INSERT OR IGNORE INTO global_settings (key, value) VALUES (?, ?)
+            `, 'Set default SMS notification status', ['sms_notifications_globally_enabled', 'false']);
+
+            // Tabelle für Benachrichtigungsziele (mit delay_minutes)
+            await runSql(`
+                CREATE TABLE IF NOT EXISTS "notification_targets" (
+                    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+                    "type" TEXT NOT NULL CHECK(type IN ('email', 'phone')),
+                    "target" TEXT NOT NULL,
+                    "priorities" TEXT NOT NULL DEFAULT '',
+                    "delay_minutes" INTEGER NOT NULL DEFAULT 0, -- Spalte hinzugefügt
+                    "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(type, target)
+                )
+            `, 'Create notification_targets table');
+            console.log("Tabelle notification_targets erstellt oder existiert bereits.");
+
+            // --- Migration für 'delay_minutes' hinzufügen ---
+            const columnsNotification = await new Promise((resolve, reject) => {
+                sqliteDB.all('PRAGMA table_info(notification_targets)', (pragmaErr, cols) => {
+                     if (pragmaErr) reject(pragmaErr); else resolve(cols || []);
+                 });
+             });
+            if (!columnsNotification.some(col => col.name === 'delay_minutes')) {
+                console.log("Adding 'delay_minutes' column to notification_targets table...");
+                await runSql(`ALTER TABLE notification_targets ADD COLUMN delay_minutes INTEGER NOT NULL DEFAULT 0`, 'Add delay_minutes column');
+                console.log("'delay_minutes' column added.");
+            }
+            // --- Ende Migration ---
+
+            // Trigger zum Aktualisieren von updated_at für notification_targets
+            await runSql(`
+                CREATE TRIGGER IF NOT EXISTS update_notification_targets_updated_at
+                AFTER UPDATE ON notification_targets FOR EACH ROW
+                BEGIN
+                    UPDATE notification_targets SET updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = OLD.id;
+                END;
+            `, 'Create notification_targets update trigger');
 
             console.log("Alle Tabellen erfolgreich erstellt oder existieren bereits.");
 
-            // --- Migrationen ---
-            const columns = await new Promise((resolve, reject) => { sqliteDB.all('PRAGMA table_info(logging_settings)', (pragmaErr, cols) => { if (pragmaErr) reject(pragmaErr); else resolve(cols || []); }); });
+            // --- Migrationen für logging_settings ---
+            const columnsLogging = await new Promise((resolve, reject) => { sqliteDB.all('PRAGMA table_info(logging_settings)', (pragmaErr, cols) => { if (pragmaErr) reject(pragmaErr); else resolve(cols || []); }); });
             const runMigration = (sql, columnName) => new Promise((resolve) => { sqliteDB.run(sql, (addErr) => { if(addErr && !addErr.message.includes('duplicate column name')) console.error(`Fehler Migration '${columnName}':`, addErr); resolve(); }); });
             const migrations = [];
-            if (!columns.some(col => col.name === 'color')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN color TEXT`, 'Add color column'));
-            if (!columns.some(col => col.name === 'page')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN page TEXT`, 'Add page column'));
-            if (!columns.some(col => col.name === 'description')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN description TEXT`, 'Add description column'));
-            if (!columns.some(col => col.name === 'unit')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN unit TEXT`, 'Add unit column'));
-            if (migrations.length > 0) { await Promise.all(migrations); console.log("Migrationen abgeschlossen."); }
+            if (!columnsLogging.some(col => col.name === 'color')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN color TEXT`, 'Add color column'));
+            if (!columnsLogging.some(col => col.name === 'page')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN page TEXT`, 'Add page column'));
+            if (!columnsLogging.some(col => col.name === 'description')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN description TEXT`, 'Add description column'));
+            if (!columnsLogging.some(col => col.name === 'unit')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN unit TEXT`, 'Add unit column'));
+            if (migrations.length > 0) { await Promise.all(migrations); console.log("Migrationen für logging_settings abgeschlossen."); }
             // --- ENDE Migrationen ---
 
             console.log("Datenbank-Setup abgeschlossen.");
@@ -214,13 +251,13 @@ io.on('connection', (socket) => {
 
   socket.on('request-settings', (data) => {
     const user = data?.user || socket.loggedInUser || null;
-    console.log(`Socket ${socket.id} fordert Settings für Benutzer: ${user}`);
+    // console.log(`Socket ${socket.id} fordert Settings für Benutzer: ${user}`);
     broadcastSettings(socket, user, sqliteDB); // Nutze Funktion aus dbRoutes
   });
 
   socket.on('set-user', (data) => {
     if (data && data.user) {
-        socket.loggedInUser = data.user;
+        socket.loggedInUser = data.user; // Speichere Benutzer im Socket für spätere Rechteprüfungen
         console.log(`Socket ${socket.id} registriert Benutzer: ${data.user}`);
         broadcastSettings(socket, data.user, sqliteDB); // Nutze Funktion aus dbRoutes
     } else {
@@ -229,7 +266,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('update-variable', async (payload) => {
-    console.log("Socket: Empfangenes 'update-variable':", payload);
+    // console.log("Socket: Empfangenes 'update-variable':", payload);
     if (!payload || !payload.key || !payload.search || !payload.target || payload.value === undefined) {
       socket.emit('update-error', { message: 'Ungültiger Payload' });
       return;
@@ -237,9 +274,9 @@ io.on('connection', (socket) => {
     try {
       const updateResult = await performVariableUpdate(payload.key, payload.search, payload.target, payload.value);
       socket.emit('update-success', updateResult);
-      console.log(`Socket: Update für ${payload.search}.${payload.target} verarbeitet.`);
+      // console.log(`Socket: Update für ${payload.search}.${payload.target} verarbeitet.`);
       if (payload.target === 'VAR_VALUE') {
-          console.log(`[Socket update-variable] Triggering rule evaluation for ${payload.search}...`);
+          // console.log(`[Socket update-variable] Triggering rule evaluation for ${payload.search}...`);
           if (typeof evaluateRules === 'function') {
               await evaluateRules(sqliteDB, payload.search, payload.value);
           } else { console.error("evaluateRules function not available!"); }
@@ -252,7 +289,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Client getrennt:', socket.id);
-    delete socket.loggedInUser;
+    delete socket.loggedInUser; // Benutzer bei Disconnect entfernen
   });
 
   // Spezifische Listener (Menu, Logging, Rules, Alarms) werden in setup... Funktionen registriert.
