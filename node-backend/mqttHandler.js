@@ -1,11 +1,10 @@
 // src/mqttHandler.js
 const mqtt = require('mqtt');
 const { fetchMenuRawFromDB } = require('./menuHandler'); // Direkter Import
+const MQTT_TOPICS = require('./mqttConfig'); // <<< NEU: Import der zentralen Topics
 
 let fetchMenuForFrontendFn = null;
 let mqttTopicLookupMap = new Map(); // Für Menü-Updates
-// +++ NEU: Topic für Alarm-Quittierungs-Antwort +++
-const ALARM_ACKNOWLEDGE_TOPIC = process.env.MQTT_ALARM_ACK_TOPIC || 'visu/alarm/acknowledge';
 
 async function buildMqttTopicLookupMap(sqliteDB) {
     console.log('[buildMqttTopicLookupMap] Starting map build...');
@@ -51,7 +50,6 @@ async function buildMqttTopicLookupMap(sqliteDB) {
       } catch (err) {
         console.error("[buildMqttTopicLookupMap] Error during map build:", err);
         mqttTopicLookupMap = new Map(); // Leere Map im Fehlerfall
-        // Fehler weiterwerfen, damit setupMqtt ihn fangen kann
         throw new Error(`Failed during buildMqttTopicLookupMap: ${err.message}`);
       }
 }
@@ -62,7 +60,6 @@ async function updateCachedMenuData(sqliteDB) {
       console.log('[updateCachedMenuData] MQTT lookup map updated.');
     } catch (err) {
       console.error('[updateCachedMenuData] Fehler beim Aktualisieren der MQTT Map:', err);
-       // Fehler hier nicht unbedingt weiterwerfen, ist nur ein Update
     }
 }
 
@@ -84,13 +81,15 @@ async function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
       const mqttBrokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://192.168.10.31:1883';
       const mqttClient = mqtt.connect(mqttBrokerUrl, mqttOptions);
 
-      const dataTopic = 'modbus/data';
-      // +++ NEU: Topics, die abonniert werden sollen +++
-      const topicsToSubscribe = [dataTopic, ALARM_ACKNOWLEDGE_TOPIC];
+      // --- GEÄNDERT: Topics aus zentraler Konfiguration verwenden ---
+      const topicsToSubscribe = [
+          MQTT_TOPICS.INCOMING_MODBUS_DATA,
+          MQTT_TOPICS.INCOMING_ALARM_ACK_RESPONSE // Topic für die Antwort auf Quittierung
+      ];
+      // --- ENDE ÄNDERUNG ---
 
       mqttClient.on('connect', () => {
           console.log(`[MQTT Handler] Verbunden mit MQTT-Broker: ${mqttBrokerUrl}`);
-          // +++ GEÄNDERT: Beide Topics abonnieren +++
           mqttClient.subscribe(topicsToSubscribe, { qos: 0 }, (err, granted) => {
             if (err) {
                 console.error(`[MQTT Handler] Fehler beim Abonnieren von Topics [${topicsToSubscribe.join(', ')}]:`, err);
@@ -102,8 +101,8 @@ async function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
 
       // Handler für eingehende Nachrichten
       mqttClient.on('message', async (topic, message) => {
-           // +++ NEU: Unterscheidung nach Topic +++
-           if (topic === dataTopic) {
+           // --- GEÄNDERT: Topics aus zentraler Konfiguration verwenden ---
+           if (topic === MQTT_TOPICS.INCOMING_MODBUS_DATA) {
                 // Verarbeitung für modbus/data
                 try {
                     const payloadString = message.toString();
@@ -136,43 +135,44 @@ async function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
 
                 } catch (err) { console.error(`[MQTT Handler] Fehler beim Verarbeiten der MQTT-Nachricht auf ${topic}:`, err, message.toString()); }
 
-           } else if (topic === ALARM_ACKNOWLEDGE_TOPIC) {
-                // +++ NEU: Verarbeitung für Alarm-Quittierungs-Antwort +++
+           } else if (topic === MQTT_TOPICS.INCOMING_ALARM_ACK_RESPONSE) { // Topic für Antwort
+                // Verarbeitung für Alarm-Quittierungs-Antwort
                 const payload = message.toString();
-                console.log(`[MQTT Handler] Nachricht auf ${ALARM_ACKNOWLEDGE_TOPIC} empfangen:`, payload);
-                // Prüfe, ob der Payload dem erwarteten "false" entspricht
+                console.log(`[MQTT Handler] Nachricht auf ${MQTT_TOPICS.INCOMING_ALARM_ACK_RESPONSE} empfangen:`, payload);
+                // Prüfe, ob der Payload dem erwarteten "false" entspricht (für Reset-Anzeige im Frontend)
                 let ackStatus = null;
                 if (payload.toLowerCase() === 'false') {
                     ackStatus = false;
                 } else {
                     try {
                        const parsedPayload = JSON.parse(payload);
+                       // Hier könnte eine spezifischere Prüfung stattfinden, falls die Antwort komplexer ist
                        if (parsedPayload && parsedPayload.acknowledged === false) {
                            ackStatus = false;
                        }
                     } catch(e) {
-                        console.warn(`[MQTT Handler] Unerwarteter Payload auf ${ALARM_ACKNOWLEDGE_TOPIC}: ${payload}`);
+                        console.warn(`[MQTT Handler] Unerwarteter Payload auf ${MQTT_TOPICS.INCOMING_ALARM_ACK_RESPONSE}: ${payload}`);
                     }
                 }
 
                 // Wenn der Status 'false' ist, sende Event an Clients
                 if (ackStatus === false) {
-                     console.log(`[MQTT Handler] Sende 'alarm-ack-status' an Clients.`);
+                     console.log(`[MQTT Handler] Sende 'alarm-ack-status' (false) an Clients.`);
                      io.emit('alarm-ack-status', { status: false }); // Event für Frontend
                 }
            }
+           // --- ENDE ÄNDERUNG ---
            // Hier könnten weitere else if für andere Topics folgen
       });
 
-      // Andere MQTT Listener (error, reconnect, etc. bleiben)
-      mqttClient.on('error', (err) => console.error('[MQTT Handler] MQTT Verbindungsfehler:', err.message));
+      // Andere MQTT Listener
+      mqttClient.on('error', (err) => console.error('[MQTT Handler] MQTT Verbindungsfehler:', err.message || err));
       mqttClient.on('reconnect', () => console.log('[MQTT Handler] Versuche, erneut mit MQTT-Broker zu verbinden...'));
       mqttClient.on('close', () => console.log('[MQTT Handler] MQTT-Verbindung geschlossen.'));
       mqttClient.on('offline', () => console.log('[MQTT Handler] MQTT-Client ist offline.'));
 
       console.log("[setupMqtt] MQTT setup complete.");
 
-      // Gültiges Objekt mit Client und Listener-Registrierungsfunktion zurückgeben
       return {
           mqttClient: mqttClient,
           onMessage: (callback) => {
@@ -184,16 +184,14 @@ async function setupMqtt(io, sqliteDB, fetchMenuForFrontend) {
       };
 
   } catch (error) {
-      // Wenn im try-Block ein Fehler auftritt
       console.error("[setupMqtt] FATAL error during MQTT setup:", error);
-      throw error; // Fehler weiterwerfen, wird in server.js gefangen
+      throw error;
   }
 } // Ende setupMqtt
 
 
-// Prüfung und Versand von MQTT-Updates für Menü-Properties (bleibt unverändert)
+// Prüfung und Versand von MQTT-Updates für Menü-Properties (unverändert)
 async function checkAndSendMqttUpdates(io, sqliteDB) {
-    // console.log("[checkAndSendMqttUpdates] Wird ausgeführt...");
     try {
         if (!fetchMenuForFrontendFn) {
             console.error("[checkAndSendMqttUpdates] fetchMenuForFrontendFn ist nicht verfügbar.");
@@ -232,7 +230,6 @@ async function checkAndSendMqttUpdates(io, sqliteDB) {
          }
         if (Object.keys(updates).length > 0) {
             io.emit('mqtt-property-update', updates);
-            // console.log('[checkAndSendMqttUpdates] Gezielte MQTT-Property-Updates nach Check gesendet:', Object.keys(updates));
         }
     } catch (err) {
         console.error('[checkAndSendMqttUpdates] Fehler beim Überprüfen der MQTT-Properties:', err);

@@ -8,7 +8,8 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
 // --- Imports ---
-const dbRoutes = require('./dbRoutes');
+const dbRoutes = require('./dbRoutes'); // Importiere den Router
+// Importiere spezifische Funktionen, die direkt in server.js benötigt werden
 const { performVariableUpdate, broadcastSettings } = require('./dbRoutes');
 const { setupLogging } = require('./loggingHandler');
 const { setupMqtt, updateCachedMenuData, checkAndSendMqttUpdates } = require('./mqttHandler');
@@ -21,7 +22,6 @@ const {
 } = require('./menuHandler');
 const { setupRulesHandlers, evaluateRules } = require('./rulesHandler');
 const { setupAlarmHandler } = require('./alarmHandler');
-
 
 const app = express();
 const server = http.createServer(app);
@@ -59,7 +59,7 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
               });
             };
 
-            // --- Tabellen erstellen (mit CURRENT_TIMESTAMP Defaults) ---
+            // --- Tabellen erstellen ---
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_items" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "label" VARCHAR, "link" VARCHAR, "svg" VARCHAR, "enable" BOOLEAN DEFAULT 1, "parent_id" INTEGER, "sort_order" INTEGER, "qhmiVariable" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("parent_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_items');
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_properties" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "menu_item_id" INTEGER, "key" VARCHAR, "value" VARCHAR, "source_type" VARCHAR CHECK(source_type IN ('static', 'dynamic', 'mqtt')), "source_key" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_properties');
             await runSql(`CREATE TABLE IF NOT EXISTS "menu_actions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "menu_item_id" INTEGER, "action_name" VARCHAR, "qhmi_variable_name" VARCHAR, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("menu_item_id") REFERENCES "menu_items" ("id") ON DELETE CASCADE)`, 'Create menu_actions');
@@ -71,39 +71,36 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
             await runSql(`CREATE TABLE IF NOT EXISTS "rule_actions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "rule_id" INTEGER NOT NULL, "target_variable_name" TEXT NOT NULL, "action_type" TEXT NOT NULL DEFAULT 'set_visibility', "target_value" TEXT NOT NULL, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("rule_id") REFERENCES "rules" ("id") ON DELETE CASCADE)`, 'Create rule_actions table');
             await runSql(`CREATE TABLE IF NOT EXISTS "alarm_configs" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "mqtt_topic" TEXT UNIQUE NOT NULL, "description" TEXT, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, 'Create alarm_configs table');
             await runSql(`CREATE TABLE IF NOT EXISTS "alarm_definitions" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "config_id" INTEGER NOT NULL, "bit_number" INTEGER NOT NULL CHECK(bit_number >= 0 AND bit_number <= 15), "alarm_text_key" TEXT NOT NULL, "priority" TEXT NOT NULL CHECK(priority IN ('prio1', 'prio2', 'prio3', 'warning', 'info')), "enabled" BOOLEAN DEFAULT 1, "created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY ("config_id") REFERENCES "alarm_configs" ("id") ON DELETE CASCADE, UNIQUE ("config_id", "bit_number"))`, 'Create alarm_definitions table');
-
-            // +++ START DER ÄNDERUNG +++
             await runSql(`
                 CREATE TABLE IF NOT EXISTS "alarm_history" (
                     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-                    "definition_id" INTEGER NULLABLE, -- Kann NULL sein für Reset
+                    "definition_id" INTEGER NULLABLE,
                     "timestamp" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "status" TEXT NOT NULL CHECK(status IN ('active', 'inactive', 'reset')), -- 'reset' hinzugefügt
+                    "status" TEXT NOT NULL CHECK(status IN ('active', 'inactive', 'reset')),
                     "mqtt_topic" TEXT,
                     "raw_value" INTEGER,
-                    "priority" TEXT, -- Hinzugefügt für Info
-                    "alarm_text_key" TEXT, -- Hinzugefügt für Info
-                    FOREIGN KEY ("definition_id") REFERENCES "alarm_definitions" ("id") ON DELETE SET NULL -- Geändert zu SET NULL
+                    "priority" TEXT,
+                    "alarm_text_key" TEXT,
+                    FOREIGN KEY ("definition_id") REFERENCES "alarm_definitions" ("id") ON DELETE SET NULL
                 )
             `, 'Create alarm_history table (modified)');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_ts ON alarm_history (timestamp DESC);`, 'Create index on alarm_history timestamp');
             await runSql(`CREATE INDEX IF NOT EXISTS idx_alarm_history_def ON alarm_history (definition_id);`, 'Create index on alarm_history definitions');
             console.log("Alarm History Tabelle (modifiziert) erfolgreich erstellt oder existiert bereits.");
-            // +++ ENDE DER ÄNDERUNG +++
-
+            // --- ENDE Tabellen ---
 
             console.log("Alle Tabellen (inkl. Alarm) erfolgreich erstellt oder existieren bereits.");
 
             // --- Migrationen ---
-            // console.log("Starte Migrationen..."); // Weniger verbose
             const columns = await new Promise((resolve, reject) => { sqliteDB.all('PRAGMA table_info(logging_settings)', (pragmaErr, cols) => { if (pragmaErr) reject(pragmaErr); else resolve(cols || []); }); });
-            const runMigration = (sql, columnName) => new Promise((resolve) => { sqliteDB.run(sql, (addErr) => { if(addErr && !addErr.message.includes('duplicate column name')) console.error(`Fehler Migration '${columnName}':`, addErr); /* else if (!addErr) console.log(`Spalte '${columnName}' hinzugefügt.`); */ resolve(); }); });
+            const runMigration = (sql, columnName) => new Promise((resolve) => { sqliteDB.run(sql, (addErr) => { if(addErr && !addErr.message.includes('duplicate column name')) console.error(`Fehler Migration '${columnName}':`, addErr); resolve(); }); });
             const migrations = [];
             if (!columns.some(col => col.name === 'color')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN color TEXT`, 'Add color column'));
             if (!columns.some(col => col.name === 'page')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN page TEXT`, 'Add page column'));
             if (!columns.some(col => col.name === 'description')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN description TEXT`, 'Add description column'));
             if (!columns.some(col => col.name === 'unit')) migrations.push(runMigration(`ALTER TABLE logging_settings ADD COLUMN unit TEXT`, 'Add unit column'));
-            if (migrations.length > 0) { await Promise.all(migrations); console.log("Migrationen abgeschlossen."); } // else { console.log("Keine Migrationen notwendig."); }
+            if (migrations.length > 0) { await Promise.all(migrations); console.log("Migrationen abgeschlossen."); }
+            // --- ENDE Migrationen ---
 
             console.log("Datenbank-Setup abgeschlossen.");
           } catch (dbSetupError) {
@@ -126,6 +123,11 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
                       console.error("FEHLER: MQTT Handler oder MQTT Client konnte nicht initialisiert werden.");
                       throw new Error("MQTT Handler/Client Initialization failed.");
                  }
+
+                 // +++ NEU: MQTT-Client global verfügbar machen +++
+                 global.mqttClient = mqttHandlerInstance.mqttClient;
+                 console.log("MQTT Client ist global verfügbar.");
+                 // +++ ENDE NEU +++
 
                 console.log("Initializing Logging Handler...");
                 setupLogging(io, sqliteDB, mqttHandlerInstance);
@@ -170,18 +172,18 @@ const sqliteDB = new sqlite3.Database(dbPath, (err) => {
 let currentFooter = { temperature: '–' };
 
 // --- API Endpunkte ---
-app.use('/db', dbRoutes); // Express Router für DB-Endpunkte
+// Die Routen in dbRoutes.js werden hier gemountet
+app.use('/db', dbRoutes);
 
+// --- Route für /setFooter (bleibt als HTTP POST) ---
 app.post('/setFooter', (req, res) => {
   const footerUpdate = req.body;
+  // Logik zum Aktualisieren des Footers (z.B. Temperatur)
   if (footerUpdate.temperature !== undefined) {
       currentFooter.temperature = footerUpdate.temperature;
-  }
-  if (global.io) {
-      const updateToSend = {};
-      if(footerUpdate.temperature !== undefined) updateToSend.temperature = currentFooter.temperature;
-      if(Object.keys(updateToSend).length > 0) {
-         global.io.emit('footer-update', updateToSend);
+      // Update per Socket.IO senden (nicht MQTT)
+      if (global.io) {
+          global.io.emit('footer-update', { temperature: currentFooter.temperature });
       }
   }
   res.sendStatus(200);
@@ -204,7 +206,7 @@ io.on('connection', (socket) => {
   socket.on('request-settings', (data) => {
     const user = data?.user || socket.loggedInUser || null;
     console.log(`Socket ${socket.id} fordert Settings für Benutzer: ${user}`);
-    broadcastSettings(socket, user, sqliteDB);
+    broadcastSettings(socket, user, sqliteDB); // Nutze broadcastSettings aus dbRoutes
   });
 
    // Benutzer setzen
@@ -212,7 +214,7 @@ io.on('connection', (socket) => {
     if (data && data.user) {
         socket.loggedInUser = data.user;
         console.log(`Socket ${socket.id} registriert Benutzer: ${data.user}`);
-        broadcastSettings(socket, data.user, sqliteDB);
+        broadcastSettings(socket, data.user, sqliteDB); // Nutze broadcastSettings aus dbRoutes
     } else {
         console.warn(`Socket ${socket.id}: Ungültige Daten bei 'set-user'.`);
     }
@@ -226,13 +228,19 @@ io.on('connection', (socket) => {
       return;
     }
     try {
+      // Rufe die Funktion aus dbRoutes auf, die jetzt auch MQTT sendet
       const updateResult = await performVariableUpdate(payload.key, payload.search, payload.target, payload.value);
-      socket.emit('update-success', updateResult);
+      socket.emit('update-success', updateResult); // Sende das Ergebnis zurück
       console.log(`Socket: Update für ${payload.search}.${payload.target} verarbeitet.`);
+
+      // Trigger rule evaluation (wenn VAR_VALUE geändert wurde)
       if (payload.target === 'VAR_VALUE') {
           console.log(`[Socket update-variable] Triggering rule evaluation for ${payload.search}...`);
-          if (typeof evaluateRules === 'function') { await evaluateRules(sqliteDB, payload.search, payload.value); }
-          else { console.error("evaluateRules function is not available or not imported correctly!"); }
+          if (typeof evaluateRules === 'function') {
+              await evaluateRules(sqliteDB, payload.search, payload.value);
+          } else {
+              console.error("evaluateRules function is not available or not imported correctly!");
+          }
       }
     } catch (error) {
       console.error(`Socket: Fehler bei Verarbeitung 'update-variable' für ${payload.search}:`, error);
